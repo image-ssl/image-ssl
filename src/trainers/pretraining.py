@@ -42,7 +42,7 @@ class PreTrainer(BaseTrainer):
         """Get model attributes for logging.
 
         Args:
-            model (nn.Module): The language model.
+            model (nn.Module): The model.
 
         Returns:
             dict: A dictionary of model attributes.
