@@ -1,5 +1,8 @@
 """Base trainer class for model management and logging."""
 
+# https://huggingface.co/docs/huggingface_hub/en/package_reference/mixins#huggingface_hub.ModelHubMixin
+# https://huggingface.co/docs/huggingface_hub/v1.1.2/en/guides/integrations#a-concrete-example-pytorch
+
 import json
 import os
 from pathlib import Path
@@ -8,7 +11,7 @@ import torch
 import wandb
 from huggingface_hub import HfApi, ModelHubMixin, hf_hub_download
 
-from models import VisionTransformer
+from models import VisionTransformer, VisionTransformerWithPretrainingHeads
 
 
 class BaseTrainer(ModelHubMixin):
@@ -16,16 +19,16 @@ class BaseTrainer(ModelHubMixin):
 
     def __init__(
         self,
-        model: VisionTransformer,
+        model: VisionTransformer | VisionTransformerWithPretrainingHeads,
         learning_rate: float,
-        optimizer_class: str = "adamw",
-        scheduler_class: str = "cosine",
+        optimizer_class: str,
+        scheduler_class: str,
         **kwargs: dict,
     ) -> None:
         """Initialize the BaseTrainer.
 
         Args:
-            model (VisionTransformer): The model to be trained.
+            model (VisionTransformer | VisionTransformerWithPretrainingHeads): The model to be trained.
             learning_rate (float): Learning rate for the optimizer.
             optimizer_class (str): The optimizer class to use.
             scheduler_class (str): The scheduler class to use.
@@ -47,7 +50,7 @@ class BaseTrainer(ModelHubMixin):
 
     def _init_optimizer(
         self,
-        model: VisionTransformer,
+        model: VisionTransformer | VisionTransformerWithPretrainingHeads,
         learning_rate: float,
         optimizer_class: str,
         **kwargs: dict,
@@ -55,7 +58,7 @@ class BaseTrainer(ModelHubMixin):
         """Initialize the optimizer.
 
         Args:
-            model (VisionTransformer): The model to be optimized.
+            model (VisionTransformer | VisionTransformerWithPretrainingHeads): The model to be optimized.
             learning_rate (float): Learning rate for the optimizer.
             optimizer_class (str): The optimizer class to use.
             **kwargs (dict): Additional keyword arguments for optimizer initialization.
@@ -66,7 +69,7 @@ class BaseTrainer(ModelHubMixin):
         self.optimizer_class = optimizer_class
         if self.optimizer_class == "adamw":
             self.optimizer = torch.optim.AdamW(
-                model.parameters(), lr=learning_rate, weight_decay=kwargs.get("weight_decay", 0.1)
+                model.parameters(), lr=learning_rate, weight_decay=kwargs.get("weight_decay", 0.05)
             )
         elif self.optimizer_class == "adam":
             self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -87,18 +90,10 @@ class BaseTrainer(ModelHubMixin):
         """
         self.scheduler_class = scheduler_class
 
-        # Set up decreasing lr scheduler
-        if self.scheduler_class == "plateau":
-            decreasing_lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                self.optimizer,
-                mode="min",
-                factor=0.1,
-                patience=1,
-            )
-        elif self.scheduler_class == "cosine":
+        if self.scheduler_class == "cosine":
             decreasing_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
-                T_max=kwargs.get("num_epochs"),
+                T_max=kwargs.get("num_steps") or kwargs.get("num_epochs"),
                 eta_min=kwargs.get("eta_min", 1e-8),
             )
         elif self.scheduler_class == "exponential":
@@ -112,14 +107,15 @@ class BaseTrainer(ModelHubMixin):
         # set up warmup scheduler if specified
         warmup_ratio = kwargs.get("warmup_ratio", 0.0)
         if warmup_ratio > 0.0:
-            warmup_epochs = int(kwargs.get("num_epochs") * warmup_ratio)
+            period = kwargs.get("num_steps") or kwargs.get("num_epochs")
+            warmup_period = int(period * warmup_ratio)
             warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
-                self.optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_epochs
+                self.optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_period
             )
             self.scheduler = torch.optim.lr_scheduler.SequentialLR(
                 self.optimizer,
                 schedulers=[warmup_scheduler, decreasing_lr_scheduler],
-                milestones=[warmup_epochs],
+                milestones=[warmup_period],
             )
         else:
             self.scheduler = decreasing_lr_scheduler
@@ -182,7 +178,7 @@ class BaseTrainer(ModelHubMixin):
         cls,
         *,
         model_id: str,
-        model: VisionTransformer,
+        model: VisionTransformer | VisionTransformerWithPretrainingHeads,
         revision: str | None = None,
         cache_dir: str | Path | None = None,
         force_download: bool = False,
@@ -197,7 +193,7 @@ class BaseTrainer(ModelHubMixin):
 
         Args:
             model_id (str): Model ID on HuggingFace Hub.
-            model (VisionTransformer): The VisionTransformer model instance.
+            model (VisionTransformer | VisionTransformerWithPretrainingHeads): The model instance.
             revision (str | None): Specific model version to use.
             cache_dir (str | Path | None): Directory to cache the downloaded model.
             force_download (bool): Whether to force re-download of model files.
@@ -216,7 +212,8 @@ class BaseTrainer(ModelHubMixin):
             trainer_state_path = local_path / "trainer_state.pt"
             if not trainer_state_path.exists():
                 raise FileNotFoundError(
-                    f"trainer_state.pt not found in {local_path}. Make sure the directory contains a saved trainer state."
+                    f"trainer_state.pt not found in {local_path}. "
+                    "Make sure the directory contains a saved trainer state."
                 )
         else:
             # Download trainer state from HuggingFace Hub

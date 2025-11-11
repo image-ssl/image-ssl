@@ -7,7 +7,7 @@ import torch
 
 import dataset
 import models
-import training
+import trainers
 import utils
 
 if __name__ == "__main__":
@@ -37,14 +37,18 @@ if __name__ == "__main__":
         print(f"Loaded val dataloader with {len(val_loader.dataset)} samples.")
 
     # initialize model
-    model = models.init_model(args, device)
+    model = models.init_model(args, device, cls="pretraining")
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"Instantiated ViT with #params: {total_params / 10**6:.2f}M")
+    print(model)
+    print(
+        f"Instantiated ViT with:\n\ttotal #params: {total_params / 10**6:.2f}M "
+        f"\n\tencoder #params: {sum(p.numel() for p in model.encoder.parameters()) / 10**6:.2f}M"
+    )
 
     # initialize trainer
-    trainer = training.init_trainer(model, args)
+    trainer = trainers.init_trainer(model, train_loader, args, cls="pretraining")
 
-    # # train the model
+    # train the model
     trainer.train(
         train_loader=train_loader,
         val_loader=val_loader,

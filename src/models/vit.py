@@ -1,4 +1,4 @@
-"""Implementation of Vision Transformer (ViT) for Self-Supervised Learning."""
+"""Implementation of Vision Transformer (ViT)."""
 
 # https://huggingface.co/docs/transformers/v4.57.1/en/model_doc/vit#transformers.ViTConfig
 
@@ -6,12 +6,49 @@ import torch
 import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin
 
-from .patch import PatchEmbedding
-from .transformer import TransformerBlock
+from .modules.patch import PatchEmbedding
+from .modules.transformer import TransformerBlock
+
+
+class VisionTransformerOutput:
+    """Output class for VisionTransformer."""
+
+    def __init__(self, last_hidden_state: torch.Tensor, cls: torch.Tensor) -> None:
+        """Initialize the output with the last hidden state.
+
+        Args:
+            last_hidden_state (torch.Tensor): The final hidden states from the transformer.
+            cls (torch.Tensor): The CLS token representation.
+        """
+        self.last_hidden_state = last_hidden_state
+        self.cls = cls
+
+    def __getitem__(self, key: str) -> torch.Tensor:
+        """Allow dictionary-style access: output['last_hidden_state'].
+
+        Args:
+            key (str): The key corresponding to the desired output.
+
+        Returns:
+            torch.Tensor: The output tensor corresponding to the key.
+        """
+        return getattr(self, key)
+
+    def __setitem__(self, key: str, value: torch.Tensor) -> None:
+        """Allow dictionary-style assignment: output['last_hidden_state'] = value.
+
+        Args:
+            key (str): The key corresponding to the output to set.
+            value (torch.Tensor): The tensor to set for the given key.
+
+        Returns:
+            None
+        """
+        setattr(self, key, value)
 
 
 class VisionTransformer(nn.Module, PyTorchModelHubMixin):
-    """Vision Transformer for self-supervised learning."""
+    """Vision Transformer Base Model."""
 
     def __init__(
         self,
@@ -147,4 +184,4 @@ class VisionTransformer(nn.Module, PyTorchModelHubMixin):
         x = self.norm(x)
 
         # Return CLS token only
-        return x[:, 0]  # (B, hidden_size)
+        return VisionTransformerOutput(last_hidden_state=x, cls=x[:, 0])  # (B, hidden_size)

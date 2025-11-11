@@ -1,30 +1,33 @@
 """Pre-training module for Vision-Transformer."""
 
 import json
+from pathlib import Path
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
+from models import VisionTransformer, VisionTransformerWithPretrainingHeads
+
 from .base import BaseTrainer
 
 
-class Trainer(BaseTrainer):
-    """Trainer class for language model training."""
+class PreTrainer(BaseTrainer):
+    """Trainer class for self-supervised pre-training."""
 
     def __init__(
         self,
-        model: nn.Module,
+        model: VisionTransformer | VisionTransformerWithPretrainingHeads,
         learning_rate: float,
-        optimizer_class: str = "adamw",
-        scheduler_class: str = "cosine",
+        optimizer_class: str,
+        scheduler_class: str,
         **kwargs: dict,
-    ) -> "Trainer":
+    ) -> None:
         """Initialize the Trainer.
 
         Args:
-            model (nn.Module): The language model to be trained.
+            model (VisionTransformer | VisionTransformerWithPretrainingHeads): The model to be trained.
             learning_rate (float): Learning rate for the optimizer.
             optimizer_class (str): Optimizer type.
             scheduler_class (str): Learning rate scheduler type.
@@ -35,7 +38,7 @@ class Trainer(BaseTrainer):
         """
         super().__init__(model, learning_rate, optimizer_class, scheduler_class, **kwargs)
 
-    def get_model_attrs(self, model: nn.Module) -> dict:
+    def _get_model_attrs(self, model: nn.Module) -> dict:
         """Get model attributes for logging.
 
         Args:
@@ -51,6 +54,40 @@ class Trainer(BaseTrainer):
         attrs.update({"total_params": sum(p.numel() for p in model.parameters())})
         return attrs
 
+    def compute_simclr_loss(self, embeddings: torch.Tensor, temperature: float = 0.5) -> torch.Tensor:
+        """Compute the SimCLR loss (NT-Xent) for a batch of embeddings.
+
+        Args:
+            embeddings (torch.Tensor): Tensor of shape (2 * batch_size, embedding_dim)
+                                        containing embeddings for augmented pairs.
+            temperature (float): Temperature parameter for scaling logits. Default=0.5.
+
+        Returns:
+            torch.Tensor: Computed SimCLR loss (scalar).
+        """
+        batch_size = embeddings.shape[0] // 2
+
+        # L2 normalize embeddings
+        embeddings = nn.functional.normalize(embeddings, dim=1, p=2)
+        # Compute cosine similarity matrix (2N x 2N)
+        similarity_matrix = torch.matmul(embeddings, embeddings.T) / temperature
+
+        # Create labels: for sample i in first half, positive is i + batch_size
+        # For sample i in second half, positive is i - batch_size
+        labels = torch.cat(
+            [
+                torch.arange(batch_size, 2 * batch_size),  # [N, N+1, ..., 2N-1]
+                torch.arange(0, batch_size),  # [0, 1, ..., N-1]
+            ]
+        ).to(embeddings.device)
+
+        # Mask out self-similarity (diagonal)
+        mask = torch.eye(2 * batch_size, dtype=torch.bool, device=embeddings.device)
+        similarity_matrix = similarity_matrix.masked_fill(mask, -1e9)
+        # Compute cross-entropy loss
+        # Each row is treated as logits, with the label indicating the positive sample
+        return nn.functional.cross_entropy(similarity_matrix, labels)
+
     def train(  # noqa: C901
         self,
         train_loader: DataLoader,
@@ -65,14 +102,13 @@ class Trainer(BaseTrainer):
         repo_id: str = None,
         log_interval_steps: int = 100,
         save_interval_steps: int = 200,
-        save_model_name: str = "model",
         save_latest: bool = False,
         save_best: bool = True,
+        **kwargs: dict,
     ) -> None:
         """Train the ViT model.
 
         Args:
-            model (nn.Module): The ViT model to be trained.
             train_loader (DataLoader): DataLoader for training data.
             val_loader (DataLoader | None): DataLoader for validation data.
             num_epochs (int): Number of training epochs.
@@ -85,9 +121,9 @@ class Trainer(BaseTrainer):
             repo_id (str): Hugging Face Hub repository ID.
             log_interval_steps (int): Steps interval for logging training loss.
             save_interval_steps (int): Steps interval for saving model checkpoints.
-            save_model_name (str): Base name for the saved model file.
             save_latest (bool): If True, overwrite the latest checkpoint instead of saving per save steps.
             save_best (bool): If True, track and save the best model checkpoint based on training loss.
+            kwargs (dict): Additional arguments.
 
         Returns:
             None
@@ -98,7 +134,7 @@ class Trainer(BaseTrainer):
                 entity=wandb_entity,
                 project=wandb_project,
                 name=wandb_name,
-                config=self.get_model_attrs(self.model),
+                config=self._get_model_attrs(self.model),
             )
 
         # Set up HuggingFace Hub Configuration
@@ -122,7 +158,7 @@ class Trainer(BaseTrainer):
         for epoch in range(num_epochs):
             total_epoch_loss = 0.0
             epoch_step = 0
-            for batch_idx, batch in enumerate(train_loader):
+            for batch in train_loader:
                 # track steps
                 epoch_step += 1
                 global_step += 1
@@ -131,32 +167,58 @@ class Trainer(BaseTrainer):
                 self.model.train()
                 self.optimizer.zero_grad()
 
-                # move batch to device
-                for transformation in batch:
-                    batch[transformation] = batch[transformation].to(device)
-                    print(batch[transformation].shape) # [B, C, H, W] or [B, num_views, C, H, W]
-                exit()
-
                 # create log dict
                 log_dict = {
                     "epoch": float(f"{epoch + (epoch_step / steps_per_epoch):.2f}"),
                     "lr": self.optimizer.param_groups[0]["lr"],
                 }
+                num_objectives = len(batch)
+                total_batch_loss = 0.0
 
-                # forward pass
-                logits = model(batch_tokens)  # (seq_len, batch, vocab_size)
-                loss = self.compute_next_token_loss(logits, batch_tokens)
+                for transformation in batch:
+                    # move batch to device
+                    images = batch[transformation].to(device)  # [B, C, H, W] or [B, num_views, C, H, W]
+                    batch_size = images.shape[0]
+                    # reshape if multiple views
+                    if len(images.shape) == 5:
+                        num_views = images.shape[1]
+                        # reshape to (num_views*B, C, H, W) for processing
+                        images = images.view(num_views * batch_size, *images.shape[2:])
+                    # else: shape is already (B, C, H, W) for single-view methods
+
+                    # forward pass
+                    # outputs is VisionTransformerWithPretrainingHeadsOutput with:
+                    #   - outputs['encoder']: VisionTransformerOutput with .last_hidden_state and .cls
+                    #   - outputs[transformation]: embeddings from the specific head (e.g., 'simclr')
+                    output = self.model(images)
+                    embeddings = output[transformation]
+
+                    # compute loss based on transformation type
+                    if transformation == "simclr":
+                        loss = self.compute_simclr_loss(embeddings, kwargs.get("simclr_temperature", 0.5))
+                        total_batch_loss += loss
+                    else:
+                        raise NotImplementedError(f"Unsupported pre-training objective: {transformation}")
+
+                    # update log dict
+                    log_dict[f"loss_{transformation}"] = loss.item()
+
+                # average loss across objectives
+                loss = total_batch_loss / num_objectives
+                log_dict["loss"] = loss.item()
 
                 # backward pass
                 loss.backward()
                 total_epoch_loss += loss.item()
-                log_dict["loss"] = loss.item()
 
                 # clip gradients
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
 
                 # optimizer step
                 self.optimizer.step()
+
+                # step the scheduler (note: we are stepping every batch)
+                self.scheduler.step()
 
                 # log metrics
                 if global_step % log_interval_steps == 0:
@@ -164,8 +226,9 @@ class Trainer(BaseTrainer):
                         {
                             "epoch": float(f"{epoch + (epoch_step / steps_per_epoch):.2f}"),
                             "step": global_step,
-                            "loss": loss.item(),
                             "lr": self.optimizer.param_groups[0]["lr"],
+                            "loss": loss.item(),
+                            **{f"loss_{k}": v for k, v in log_dict.items() if k.startswith("loss_") and k != "loss"},
                         }
                     )
                     progress_bar.write(log_str)
@@ -183,11 +246,17 @@ class Trainer(BaseTrainer):
 
                 # save model checkpoint
                 if global_step % save_interval_steps == 0:
-                    self.save_training_state_locally(
-                        save_dir, model, global_step, save_model_name, save_latest=save_latest
-                    )
+                    if not save_latest:
+                        checkpoint_path = Path(save_dir) / f"step_{global_step}"
+                    else:
+                        checkpoint_path = Path(save_dir) / "latest"
+
+                    self.save_pretrained(save_directory=checkpoint_path)
                     if upload_model_to_hub:
-                        self.upload_model_to_hub(repo_id, save_dir, global_step)
+                        self.push_to_hub(
+                            repo_id=repo_id,
+                            commit_message=f"Training Step {global_step}",
+                        )
 
             # end of epoch logging
             avg_epoch_loss = total_epoch_loss / epoch_step
@@ -206,19 +275,21 @@ class Trainer(BaseTrainer):
             # save best model checkpoint based on training loss
             if save_best and best_train_loss is not None and avg_epoch_loss < best_train_loss:
                 best_train_loss = avg_epoch_loss
-                self.save_training_state_locally(
-                    save_dir, model, global_step, f"{save_model_name}_best", save_latest=True
-                )
+                checkpoint_path = Path(save_dir) / "best_model"
+                self.save_pretrained(save_directory=checkpoint_path)
                 if upload_model_to_hub:
-                    self.upload_model_to_hub(repo_id, save_dir, global_step)
-
-            # step the scheduler
-            self.scheduler.step()
+                    self.push_to_hub(
+                        repo_id=repo_id,
+                        commit_message=f"Best model at Step {global_step}",
+                    )
 
         # close progress bar
         progress_bar.close()
 
         # final model save
-        self.save_training_state_locally(save_dir, model, global_step, save_model_name, save_latest=save_latest)
+        self.save_pretrained(save_directory=Path(save_dir) / "final_model")
         if upload_model_to_hub:
-            self.upload_model_to_hub(repo_id, save_dir, global_step)
+            self.push_to_hub(
+                repo_id=repo_id,
+                commit_message=f"Final model at Step {global_step}",
+            )

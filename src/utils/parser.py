@@ -118,14 +118,14 @@ def parse_pretrain_args() -> argparse.Namespace:
     parser.add_argument(
         "--weight-decay",
         type=float,
-        default=0.1,
-        help="Weight decay (L2 regularization) factor for the optimizer. Default=0.1.",
+        default=0.05,
+        help="Weight decay (L2 regularization) factor for the optimizer. Default=0.05.",
     )
     parser.add_argument(
         "--scheduler-class",
         type=str,
         default="cosine",
-        choices=["cosine", "plateau", "exponential"],
+        choices=["cosine", "exponential"],
         help="Learning rate scheduler class to use. Default='cosine'.",
     )
     parser.add_argument(
