@@ -1,0 +1,295 @@
+"""Pre-training module for Vision-Transformer."""
+
+import json
+from pathlib import Path
+
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
+
+from models import VisionTransformer, VisionTransformerWithPretrainingHeads
+
+from .base import BaseTrainer
+
+
+class PreTrainer(BaseTrainer):
+    """Trainer class for self-supervised pre-training."""
+
+    def __init__(
+        self,
+        model: VisionTransformer | VisionTransformerWithPretrainingHeads,
+        learning_rate: float,
+        optimizer_class: str,
+        scheduler_class: str,
+        **kwargs: dict,
+    ) -> None:
+        """Initialize the Trainer.
+
+        Args:
+            model (VisionTransformer | VisionTransformerWithPretrainingHeads): The model to be trained.
+            learning_rate (float): Learning rate for the optimizer.
+            optimizer_class (str): Optimizer type.
+            scheduler_class (str): Learning rate scheduler type.
+            **kwargs (dict): Additional arguments for the base trainer.
+
+        Returns:
+            Trainer: An instance of the Trainer class.
+        """
+        super().__init__(model, learning_rate, optimizer_class, scheduler_class, **kwargs)
+
+    def _get_model_attrs(self, model: nn.Module) -> dict:
+        """Get model attributes for logging.
+
+        Args:
+            model (nn.Module): The model.
+
+        Returns:
+            dict: A dictionary of model attributes.
+        """
+        attrs = model.__dict__.copy()
+        attrs.update({"model_type": type(model).__name__})
+        attrs.update({"model_class": model.__class__.__name__})
+        attrs.update({"model_module": model.__class__.__module__})
+        attrs.update({"total_params": sum(p.numel() for p in model.parameters())})
+        return attrs
+
+    def compute_simclr_loss(self, embeddings: torch.Tensor, temperature: float = 0.5) -> torch.Tensor:
+        """Compute the SimCLR loss (NT-Xent) for a batch of embeddings.
+
+        Args:
+            embeddings (torch.Tensor): Tensor of shape (2 * batch_size, embedding_dim)
+                                        containing embeddings for augmented pairs.
+            temperature (float): Temperature parameter for scaling logits. Default=0.5.
+
+        Returns:
+            torch.Tensor: Computed SimCLR loss (scalar).
+        """
+        batch_size = embeddings.shape[0] // 2
+
+        # L2 normalize embeddings
+        embeddings = nn.functional.normalize(embeddings, dim=1, p=2)
+        # Compute cosine similarity matrix (2N x 2N)
+        similarity_matrix = torch.matmul(embeddings, embeddings.T) / temperature
+
+        # Create labels: for sample i in first half, positive is i + batch_size
+        # For sample i in second half, positive is i - batch_size
+        labels = torch.cat(
+            [
+                torch.arange(batch_size, 2 * batch_size),  # [N, N+1, ..., 2N-1]
+                torch.arange(0, batch_size),  # [0, 1, ..., N-1]
+            ]
+        ).to(embeddings.device)
+
+        # Mask out self-similarity (diagonal)
+        mask = torch.eye(2 * batch_size, dtype=torch.bool, device=embeddings.device)
+        similarity_matrix = similarity_matrix.masked_fill(mask, -1e9)
+        # Compute cross-entropy loss
+        # Each row is treated as logits, with the label indicating the positive sample
+        return nn.functional.cross_entropy(similarity_matrix, labels)
+
+    def train(  # noqa: C901
+        self,
+        train_loader: DataLoader,
+        val_loader: DataLoader | None,  # TODO: Implement validation logic
+        num_epochs: int,
+        save_dir: str = "./saved_models",
+        use_wandb: bool = False,
+        wandb_entity: str = None,
+        wandb_project: str = None,
+        wandb_name: str = None,
+        upload_model_to_hub: bool = False,
+        repo_id: str = None,
+        log_interval_steps: int = 100,
+        save_interval_steps: int = 200,
+        save_latest: bool = False,
+        save_best: bool = True,
+        **kwargs: dict,
+    ) -> None:
+        """Train the ViT model.
+
+        Args:
+            train_loader (DataLoader): DataLoader for training data.
+            val_loader (DataLoader | None): DataLoader for validation data.
+            num_epochs (int): Number of training epochs.
+            save_dir (str): Directory to save model checkpoints.
+            use_wandb (bool): Whether to use Weights & Biases for logging.
+            wandb_entity (str): Weights & Biases entity name.
+            wandb_project (str): Weights & Biases project name.
+            wandb_name (str): Weights & Biases run name.
+            upload_model_to_hub (bool): Whether to upload the model to Hugging Face Hub
+            repo_id (str): Hugging Face Hub repository ID.
+            log_interval_steps (int): Steps interval for logging training loss.
+            save_interval_steps (int): Steps interval for saving model checkpoints.
+            save_latest (bool): If True, overwrite the latest checkpoint instead of saving per save steps.
+            save_best (bool): If True, track and save the best model checkpoint based on training loss.
+            kwargs (dict): Additional arguments.
+
+        Returns:
+            None
+        """
+        # initialize logging (e.g., Weights & Biases)
+        if use_wandb:
+            self.init_wandb(
+                entity=wandb_entity,
+                project=wandb_project,
+                name=wandb_name,
+                config=self._get_model_attrs(self.model),
+            )
+
+        # Set up HuggingFace Hub Configuration
+        if upload_model_to_hub:
+            self.init_hf_api()
+
+        # Set up tracking variables
+        global_step = 0
+        steps_per_epoch = len(train_loader)
+        total_steps = num_epochs * steps_per_epoch
+        progress_bar = tqdm(total=total_steps)
+        best_train_loss = float("inf") if save_best else None
+
+        # reset model to training mode
+        self.model.train()
+        self.model.zero_grad()
+        torch.cuda.empty_cache()
+        device = next(self.model.parameters()).device
+
+        # training loop
+        for epoch in range(num_epochs):
+            total_epoch_loss = 0.0
+            epoch_step = 0
+            for batch in train_loader:
+                # track steps
+                epoch_step += 1
+                global_step += 1
+
+                # zero gradients
+                self.model.train()
+                self.optimizer.zero_grad()
+
+                # create log dict
+                log_dict = {
+                    "epoch": float(f"{epoch + (epoch_step / steps_per_epoch):.2f}"),
+                    "lr": self.optimizer.param_groups[0]["lr"],
+                }
+                num_objectives = len(batch)
+                total_batch_loss = 0.0
+
+                for transformation in batch:
+                    # move batch to device
+                    images = batch[transformation].to(device)  # [B, C, H, W] or [B, num_views, C, H, W]
+                    batch_size = images.shape[0]
+                    # reshape if multiple views
+                    if len(images.shape) == 5:
+                        num_views = images.shape[1]
+                        # reshape to (num_views*B, C, H, W) for processing
+                        images = images.view(num_views * batch_size, *images.shape[2:])
+                    # else: shape is already (B, C, H, W) for single-view methods
+
+                    # forward pass
+                    # outputs is VisionTransformerWithPretrainingHeadsOutput with:
+                    #   - outputs['encoder']: VisionTransformerOutput with .last_hidden_state and .cls
+                    #   - outputs[transformation]: embeddings from the specific head (e.g., 'simclr')
+                    output = self.model(images)
+                    embeddings = output[transformation]
+
+                    # compute loss based on transformation type
+                    if transformation == "simclr":
+                        loss = self.compute_simclr_loss(embeddings, kwargs.get("simclr_temperature", 0.5))
+                        total_batch_loss += loss
+                    else:
+                        raise NotImplementedError(f"Unsupported pre-training objective: {transformation}")
+
+                    # update log dict
+                    log_dict[f"loss_{transformation}"] = loss.item()
+
+                # average loss across objectives
+                loss = total_batch_loss / num_objectives
+                log_dict["loss"] = loss.item()
+
+                # backward pass
+                loss.backward()
+                total_epoch_loss += loss.item()
+
+                # clip gradients
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
+                # optimizer step
+                self.optimizer.step()
+
+                # step the scheduler (note: we are stepping every batch)
+                self.scheduler.step()
+
+                # log metrics
+                if global_step % log_interval_steps == 0:
+                    log_str = json.dumps(
+                        {
+                            "epoch": float(f"{epoch + (epoch_step / steps_per_epoch):.2f}"),
+                            "step": global_step,
+                            "lr": self.optimizer.param_groups[0]["lr"],
+                            "loss": loss.item(),
+                            **{f"loss_{k}": v for k, v in log_dict.items() if k.startswith("loss_") and k != "loss"},
+                        }
+                    )
+                    progress_bar.write(log_str)
+                    if self.wandb_writer is not None:
+                        self.write_losses_to_wandb(global_step, log_dict)
+
+                # update progress bar
+                progress_bar.set_postfix(
+                    {
+                        "epoch": float(f"{epoch + (epoch_step / steps_per_epoch):.2f}"),
+                        "loss": f"{loss.item():.4f}",
+                    }
+                )
+                progress_bar.update(1)
+
+                # save model checkpoint
+                if global_step % save_interval_steps == 0:
+                    if not save_latest:
+                        checkpoint_path = Path(save_dir) / f"step_{global_step}"
+                    else:
+                        checkpoint_path = Path(save_dir) / "latest"
+
+                    self.save_pretrained(save_directory=checkpoint_path)
+                    if upload_model_to_hub:
+                        self.push_to_hub(
+                            repo_id=repo_id,
+                            commit_message=f"Training Step {global_step}",
+                        )
+
+            # end of epoch logging
+            avg_epoch_loss = total_epoch_loss / epoch_step
+            log_str = json.dumps(
+                {
+                    "epoch": epoch + 1,
+                    "step": global_step,
+                    "avg_loss": avg_epoch_loss,
+                    "lr": self.optimizer.param_groups[0]["lr"],
+                }
+            )
+            progress_bar.write(log_str)
+            if self.wandb_writer is not None:
+                self.write_losses_to_wandb(global_step, {"avg_loss": avg_epoch_loss})
+
+            # save best model checkpoint based on training loss
+            if save_best and best_train_loss is not None and avg_epoch_loss < best_train_loss:
+                best_train_loss = avg_epoch_loss
+                checkpoint_path = Path(save_dir) / "best_model"
+                self.save_pretrained(save_directory=checkpoint_path)
+                if upload_model_to_hub:
+                    self.push_to_hub(
+                        repo_id=repo_id,
+                        commit_message=f"Best model at Step {global_step}",
+                    )
+
+        # close progress bar
+        progress_bar.close()
+
+        # final model save
+        self.save_pretrained(save_directory=Path(save_dir) / "final_model")
+        if upload_model_to_hub:
+            self.push_to_hub(
+                repo_id=repo_id,
+                commit_message=f"Final model at Step {global_step}",
+            )
