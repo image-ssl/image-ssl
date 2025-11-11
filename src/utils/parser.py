@@ -134,6 +134,12 @@ def parse_pretrain_args() -> argparse.Namespace:
         default=0.1,
         help="Ratio of warmup steps to total training steps for the scheduler. Default=0.1.",
     )
+    parser.add_argument(
+        "--simclr-temperature",
+        type=float,
+        default=0.5,
+        help="Temperature parameter for SimCLR loss. Default=0.5.",
+    )
 
     # Logging and checkpointing
     parser.add_argument(
@@ -153,12 +159,6 @@ def parse_pretrain_args() -> argparse.Namespace:
         type=str,
         default="./saved_models",
         help="Directory to save model checkpoints. Default='./saved_models'.",
-    )
-    parser.add_argument(
-        "--save-model-name",
-        type=str,
-        default="model",
-        help="Base name for the saved model file. Default='model'.",
     )
     parser.add_argument(
         "--save-latest",

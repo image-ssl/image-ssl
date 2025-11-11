@@ -62,7 +62,7 @@ if __name__ == "__main__":
         repo_id=args.repo_id,
         log_interval_steps=args.log_interval_steps,
         save_interval_steps=args.save_interval_steps,
-        save_model_name=args.save_model_name,
         save_latest=args.save_latest,
         save_best=args.save_best,
+        simclr_temperature=args.simclr_temperature,
     )

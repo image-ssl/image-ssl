@@ -91,7 +91,7 @@ class PreTrainer(BaseTrainer):
     def train(  # noqa: C901
         self,
         train_loader: DataLoader,
-        val_loader: DataLoader | None,
+        val_loader: DataLoader | None,  # TODO: Implement validation logic
         num_epochs: int,
         save_dir: str = "./saved_models",
         use_wandb: bool = False,
