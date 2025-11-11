@@ -93,7 +93,7 @@ class BaseTrainer(ModelHubMixin):
         if self.scheduler_class == "cosine":
             decreasing_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
-                T_max=kwargs.get("num_steps") or kwargs.get("num_epochs"),
+                T_max=kwargs.get("num_steps"),
                 eta_min=kwargs.get("eta_min", 1e-8),
             )
         elif self.scheduler_class == "exponential":
@@ -107,7 +107,7 @@ class BaseTrainer(ModelHubMixin):
         # set up warmup scheduler if specified
         warmup_ratio = kwargs.get("warmup_ratio", 0.0)
         if warmup_ratio > 0.0:
-            period = kwargs.get("num_steps") or kwargs.get("num_epochs")
+            period = kwargs.get("num_steps")
             warmup_period = int(period * warmup_ratio)
             warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
                 self.optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_period

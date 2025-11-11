@@ -62,7 +62,7 @@ def create_pretrain_dataloaders(
         num_workers=2,
         persistent_workers=True,
         pin_memory=True,
-        drop_last=False,
+        drop_last=True,
     )
 
     return train_loader, val_loader
