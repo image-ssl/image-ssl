@@ -1,5 +1,5 @@
 [project]
-name = "pretraining"
+name = "image-ssl"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -41,7 +41,7 @@ convention = "google"
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 extend-exclude = ["build"]
 
 [tool.ruff.format]
