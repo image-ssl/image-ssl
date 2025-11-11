@@ -1,0 +1,10 @@
+.venv
+.idea/
+.ruff_cache/
+__pycache__/
+.vscode/
+*.pt
+*.bin
+saved_models/
+wandb/
+logs/

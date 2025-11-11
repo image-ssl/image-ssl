@@ -1,0 +1,49 @@
+[project]
+name = "pretraining"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "datasets>=4.4.1",
+    "huggingface-hub>=1.1.2",
+    "numpy>=2.3.4",
+    "safetensors>=0.6.2",
+    "torch>=2.9.0",
+    "torchvision>=0.24.0",
+    "wandb>=0.22.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pre-commit>=4.4.0",
+    "ruff>=0.14.4",
+]
+
+[tool.ruff.lint]
+select = [
+    "E", # Pycodestyle errors
+    "F", # Pyflakes errors
+    "W", # Pycodestyle warnings
+    "UP", # Pyupgrade rules
+    "I", # Import related rules
+    "C90", # Complexity rules
+    "D", # Documentation rules
+    "ANN", # Annotations rules
+    "TYP", # Type checking rules
+    "N", # Naming rules
+    "Q000", # Quotation style rules
+    "RET", # Return type rules
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["build"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = true
