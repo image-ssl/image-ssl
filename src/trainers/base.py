@@ -8,9 +8,9 @@ import os
 from pathlib import Path
 
 import torch
-import wandb
 from huggingface_hub import HfApi, ModelHubMixin, hf_hub_download
 
+import wandb
 from models import VisionTransformer, VisionTransformerWithPretrainingHeads
 
 

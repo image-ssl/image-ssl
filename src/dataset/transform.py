@@ -79,5 +79,5 @@ class ImageTransform:
                 out[t] = (transform(x),)
             else:
                 out[t] = tuple(transform(x) for _ in range(num_views))
-            out[t] = torch.stack(out[t], dim=0)
+                out[t] = torch.stack(out[t], dim=0)
         return out
