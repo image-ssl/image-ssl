@@ -89,7 +89,7 @@ class PreTrainer(BaseTrainer):
         return nn.functional.cross_entropy(similarity_matrix, labels)
 
     @torch.no_grad()
-    def validate(self, val_loader: DataLoader, **kwargs: dict) -> None:
+    def validate(self, val_loader: DataLoader, **kwargs: dict) -> dict[str, float]:
         """Validate the ViT model.
 
         Args:
@@ -97,7 +97,7 @@ class PreTrainer(BaseTrainer):
             kwargs (dict): Additional arguments.
 
         Returns:
-            None
+            dict[str, float]: A dictionary of validation losses.
         """
         # TODO: There is quite a bit of redundancy here with the training loop, refactor later
         self.model.eval()
@@ -161,7 +161,7 @@ class PreTrainer(BaseTrainer):
     def train(  # noqa: C901
         self,
         train_loader: DataLoader,
-        val_loader: DataLoader | None,  # TODO: Implement validation logic
+        val_loader: DataLoader | None,
         num_epochs: int,
         save_dir: str = "./saved_models",
         use_wandb: bool = False,
@@ -225,6 +225,18 @@ class PreTrainer(BaseTrainer):
         self.model.zero_grad()
         torch.cuda.empty_cache()
         device = next(self.model.parameters()).device
+
+        # preliminary checks
+        if loss_metric_for_best_model == "val" and val_loader is None:
+            raise ValueError("Cannot use 'val' metric for best model when val_loader is None")
+        if upload_model_to_hub and repo_id is None:
+            raise ValueError("repo_id must be specified when upload_model_to_hub is True")
+        if len(train_loader) == 0:
+            raise ValueError("train_loader is empty.")
+        if val_loader is not None and len(val_loader) == 0:
+            raise ValueError("val_loader is empty.")
+        if save_best and loss_metric_for_best_model not in ["train", "val"]:
+            raise ValueError("loss_metric_for_best_model must be either 'train' or 'val'.")
 
         # training loop
         for epoch in range(num_epochs):
@@ -342,7 +354,7 @@ class PreTrainer(BaseTrainer):
             )
             progress_bar.write(log_str)
             if self.wandb_writer is not None:
-                self.write_losses_to_wandb(global_step, {"avg_loss": avg_epoch_loss})
+                self.write_losses_to_wandb(global_step, {"loss_avg": avg_epoch_loss})
 
             # run validation
             if val_loader is not None:
