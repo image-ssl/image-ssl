@@ -25,7 +25,7 @@ jobs:
 
       - name: Run Ruff Lint
         run: |
-          ruff check . --output-format=github
+          ruff check . --output-format=github --config=pyproject.toml
 
       - name: Run Ruff Format Check
         run: |
