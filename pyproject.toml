@@ -1,5 +1,5 @@
 [project]
-name = "pretraining"
+name = "image-ssl"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -20,6 +20,12 @@ dev = [
     "ruff>=0.14.4",
 ]
 
+[tool.ruff]
+src = ["src"]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["build"]
+
 [tool.ruff.lint]
 select = [
     "E", # Pycodestyle errors
@@ -38,11 +44,6 @@ select = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
-
-[tool.ruff]
-line-length = 120
-target-version = "py311"
-extend-exclude = ["build"]
 
 [tool.ruff.format]
 quote-style = "double"
