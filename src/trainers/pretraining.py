@@ -193,7 +193,7 @@ class PreTrainer(BaseTrainer):
             log_interval_steps (int): Steps interval for logging training loss.
             save_interval_steps (int): Steps interval for saving model checkpoints.
             save_latest (bool): If True, overwrite the latest checkpoint instead of saving per save steps.
-            save_best (bool): If True, track and save the best model checkpoint based on training loss.
+            save_best (bool): If True, track and save the best model checkpoint based on the specified loss metric.
             loss_metric_for_best_model (str): Metric to use for best model tracking ('train' or 'val').
             kwargs (dict): Additional arguments.
 
@@ -369,7 +369,7 @@ class PreTrainer(BaseTrainer):
                         {f"val_{k}": v for k, v in val_losses.items()},
                     )
 
-            # save best model checkpoint based on training loss
+            # save best model checkpoint based on the specified metric
             if save_best and best_loss is not None:
                 # determine which loss metric to use
                 if loss_metric_for_best_model == "train":
