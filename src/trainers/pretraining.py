@@ -88,10 +88,80 @@ class PreTrainer(BaseTrainer):
         # Each row is treated as logits, with the label indicating the positive sample
         return nn.functional.cross_entropy(similarity_matrix, labels)
 
+    @torch.no_grad()
+    def validate(self, val_loader: DataLoader, **kwargs: dict) -> dict[str, float]:
+        """Validate the ViT model.
+
+        Args:
+            val_loader (DataLoader): DataLoader for validation data.
+            kwargs (dict): Additional arguments.
+
+        Returns:
+            dict[str, float]: A dictionary of validation losses.
+        """
+        # TODO: There is quite a bit of redundancy here with the training loop, refactor later
+        self.model.eval()
+        device = next(self.model.parameters()).device
+
+        total_val_loss = 0.0
+        num_batches = 0
+        val_losses = dict()
+        progress_bar = tqdm(total=len(val_loader), desc="Running validation")
+
+        for batch in val_loader:
+            num_batches += 1
+            total_batch_loss = 0.0
+            num_objectives = len(batch)
+
+            for transformation in batch:
+                # move batch to device
+                images = batch[transformation].to(device)  # [B, C, H, W] or [B, num_views, C, H, W]
+                batch_size = images.shape[0]
+                # reshape if multiple views
+                if len(images.shape) == 5:
+                    num_views = images.shape[1]
+                    # reshape to (num_views*B, C, H, W) for processing
+                    images = images.view(num_views * batch_size, *images.shape[2:])
+                # else: shape is already (B, C, H, W) for single-view methods
+
+                # forward pass
+                output = self.model(images)
+                embeddings = output[transformation]
+
+                # compute loss based on transformation type
+                if transformation == "simclr":
+                    loss = self.compute_simclr_loss(embeddings, kwargs.get("simclr_temperature", 0.5))
+                    total_batch_loss += loss.item()
+                else:
+                    raise NotImplementedError(f"Unsupported pre-training objective: {transformation}")
+
+                # track individual losses
+                val_losses.setdefault(transformation, 0.0)
+                val_losses[transformation] += loss.item()
+
+            # average loss across objectives
+            total_batch_loss = total_batch_loss / num_objectives
+            total_val_loss += total_batch_loss
+
+            progress_bar.set_postfix({"val_loss": f"{total_batch_loss:.4f}"})
+            progress_bar.update(1)
+
+        progress_bar.close()
+
+        # log average validation losses
+        avg_val_loss = total_val_loss / num_batches
+        val_losses = {f"loss_{k}": v / num_batches for k, v in val_losses.items()}
+        val_losses["loss_avg"] = avg_val_loss
+
+        # set model back to train mode
+        self.model.train()
+
+        return val_losses
+
     def train(  # noqa: C901
         self,
         train_loader: DataLoader,
-        val_loader: DataLoader | None,  # TODO: Implement validation logic
+        val_loader: DataLoader | None,
         num_epochs: int,
         save_dir: str = "./saved_models",
         use_wandb: bool = False,
@@ -104,6 +174,7 @@ class PreTrainer(BaseTrainer):
         save_interval_steps: int = 200,
         save_latest: bool = False,
         save_best: bool = True,
+        loss_metric_for_best_model: str = "train",
         **kwargs: dict,
     ) -> None:
         """Train the ViT model.
@@ -122,7 +193,8 @@ class PreTrainer(BaseTrainer):
             log_interval_steps (int): Steps interval for logging training loss.
             save_interval_steps (int): Steps interval for saving model checkpoints.
             save_latest (bool): If True, overwrite the latest checkpoint instead of saving per save steps.
-            save_best (bool): If True, track and save the best model checkpoint based on training loss.
+            save_best (bool): If True, track and save the best model checkpoint based on the specified loss metric.
+            loss_metric_for_best_model (str): Metric to use for best model tracking ('train' or 'val').
             kwargs (dict): Additional arguments.
 
         Returns:
@@ -146,13 +218,25 @@ class PreTrainer(BaseTrainer):
         steps_per_epoch = len(train_loader)
         total_steps = num_epochs * steps_per_epoch
         progress_bar = tqdm(total=total_steps)
-        best_train_loss = float("inf") if save_best else None
+        best_loss = float("inf") if save_best else None
 
         # reset model to training mode
         self.model.train()
         self.model.zero_grad()
         torch.cuda.empty_cache()
         device = next(self.model.parameters()).device
+
+        # preliminary checks
+        if loss_metric_for_best_model == "val" and val_loader is None:
+            raise ValueError("Cannot use 'val' metric for best model when val_loader is None")
+        if upload_model_to_hub and repo_id is None:
+            raise ValueError("repo_id must be specified when upload_model_to_hub is True")
+        if len(train_loader) == 0:
+            raise ValueError("train_loader is empty.")
+        if val_loader is not None and len(val_loader) == 0:
+            raise ValueError("val_loader is empty.")
+        if save_best and loss_metric_for_best_model not in ["train", "val"]:
+            raise ValueError("loss_metric_for_best_model must be either 'train' or 'val'.")
 
         # training loop
         for epoch in range(num_epochs):
@@ -264,24 +348,46 @@ class PreTrainer(BaseTrainer):
                 {
                     "epoch": epoch + 1,
                     "step": global_step,
-                    "avg_loss": avg_epoch_loss,
+                    "loss_avg": avg_epoch_loss,
                     "lr": self.optimizer.param_groups[0]["lr"],
                 }
             )
             progress_bar.write(log_str)
             if self.wandb_writer is not None:
-                self.write_losses_to_wandb(global_step, {"avg_loss": avg_epoch_loss})
+                self.write_losses_to_wandb(global_step, {"loss_avg": avg_epoch_loss})
 
-            # save best model checkpoint based on training loss
-            if save_best and best_train_loss is not None and avg_epoch_loss < best_train_loss:
-                best_train_loss = avg_epoch_loss
-                checkpoint_path = Path(save_dir) / "best_model"
-                self.save_pretrained(save_directory=checkpoint_path)
-                if upload_model_to_hub:
-                    self.push_to_hub(
-                        repo_id=repo_id,
-                        commit_message=f"Best model at Step {global_step}",
+            # run validation
+            if val_loader is not None:
+                val_losses = self.validate(val_loader, **kwargs)
+                log_str = json.dumps(
+                    {"epoch": epoch + 1, "step": global_step, **{f"val_{k}": v for k, v in val_losses.items()}}
+                )
+                progress_bar.write(log_str)
+                if self.wandb_writer is not None:
+                    self.write_losses_to_wandb(
+                        global_step,
+                        {f"val_{k}": v for k, v in val_losses.items()},
                     )
+
+            # save best model checkpoint based on the specified metric
+            if save_best and best_loss is not None:
+                # determine which loss metric to use
+                if loss_metric_for_best_model == "train":
+                    current_loss = avg_epoch_loss
+                elif loss_metric_for_best_model == "val" and val_loader is not None:
+                    current_loss = val_losses["loss_avg"]
+                else:
+                    raise ValueError("Invalid loss_metric_for_best_model or missing val_loader.")
+
+                if current_loss < best_loss:
+                    best_loss = current_loss
+                    checkpoint_path = Path(save_dir) / "best_model"
+                    self.save_pretrained(save_directory=checkpoint_path)
+                    if upload_model_to_hub:
+                        self.push_to_hub(
+                            repo_id=repo_id,
+                            commit_message=f"Best model at Step {global_step}",
+                        )
 
         # close progress bar
         progress_bar.close()
