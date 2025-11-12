@@ -40,6 +40,7 @@ select = [
 convention = "google"
 
 [tool.ruff]
+src = ["src"]
 line-length = 120
 target-version = "py312"
 extend-exclude = ["build"]
