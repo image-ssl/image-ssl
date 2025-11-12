@@ -20,6 +20,9 @@ jobs:
       - name: Install Ruff
         run: pip install -U ruff
 
+      - name: Show ruff config
+        run: ruff check --show-settings
+
       - name: Run Ruff Lint
         run: |
           ruff check . --output-format=github
