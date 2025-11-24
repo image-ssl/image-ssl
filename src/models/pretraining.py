@@ -113,20 +113,23 @@ class VisionTransformerWithPretrainingHeads(nn.Module, PyTorchModelHubMixin):
             else:
                 raise NotImplementedError(f"Unsupported pre-training objective: {objective}")
 
-    def forward(self, x: torch.Tensor) -> VisionTransformerWithPretrainingHeadsOutput:
+    def forward(self, x: torch.Tensor | list[torch.Tensor]) -> VisionTransformerWithPretrainingHeadsOutput:
         """Forward pass through the Vision Transformer and pre-training heads."""
         # cls = self.encoder(x)  # [B, hidden_size], CLS embedding
         # outputs = {"encoder": cls}
         # for name, head in self.heads.items():
         #     outputs[name] = head(cls)  # <-- pass CLS directly
         # return VisionTransformerWithPretrainingHeadsOutput(**outputs)
-        idx_crops = torch.cumsum(torch.unique_consecutive(
-            torch.tensor([inp.shape[-1] for inp in x]),
-            return_counts=True,
-        )[1], 0)
+        idx_crops = torch.cumsum(
+            torch.unique_consecutive(
+                torch.tensor([inp.shape[-1] for inp in x]),
+                return_counts=True,
+            )[1],
+            0,
+        )
         start_idx, output = 0, torch.empty(0).to(x[0].device)
         for end_idx in idx_crops:
-            _out = self.encoder(torch.cat(x[start_idx: end_idx])).cls
+            _out = self.encoder(torch.cat(x[start_idx:end_idx])).cls
             # The output is a tuple with XCiT model. See:
             # https://github.com/facebookresearch/xcit/blob/master/xcit.py#L404-L405
             if isinstance(_out, tuple):

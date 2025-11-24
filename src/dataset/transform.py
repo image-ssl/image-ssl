@@ -161,6 +161,7 @@ class ImageTransform:
         }
 
         # 2 global + n local = 2+n total views
+        # TODO: Make num_global_crops a parameter
         num_views = 2 + self.num_local_crops
         return transforms_dict, num_views
 
