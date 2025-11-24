@@ -2,6 +2,7 @@
 
 # https://huggingface.co/docs/transformers/v4.57.1/en/model_doc/vit#transformers.ViTConfig
 
+import math
 import torch
 import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin
@@ -154,6 +155,28 @@ class VisionTransformer(nn.Module, PyTorchModelHubMixin):
             nn.init.zeros_(m.bias)
             nn.init.ones_(m.weight)
 
+    def interpolate_pos_encoding(self, x, w, h):
+        npatch = x.shape[1] - 1
+        N = self.pos_embed.shape[1] - 1
+        if npatch == N and w == h:
+            return self.pos_embed
+        class_pos_embed = self.pos_embed[:, 0]
+        patch_pos_embed = self.pos_embed[:, 1:]
+        dim = x.shape[-1]
+        w0 = w // self.patch_embed.patch_size
+        h0 = h // self.patch_embed.patch_size
+        # we add a small number to avoid floating point error in the interpolation
+        # see discussion at https://github.com/facebookresearch/dino/issues/8
+        w0, h0 = w0 + 0.1, h0 + 0.1
+        patch_pos_embed = nn.functional.interpolate(
+            patch_pos_embed.reshape(1, int(math.sqrt(N)), int(math.sqrt(N)), dim).permute(0, 3, 1, 2),
+            scale_factor=(w0 / math.sqrt(N), h0 / math.sqrt(N)),
+            mode='bicubic',
+        )
+        assert int(w0) == patch_pos_embed.shape[-2] and int(h0) == patch_pos_embed.shape[-1]
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
+        return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass of the Vision Transformer.
 
@@ -163,6 +186,7 @@ class VisionTransformer(nn.Module, PyTorchModelHubMixin):
         Returns:
             torch.Tensor: CLS token output of shape (B, hidden_size).
         """
+        B, nc, w, h = x.shape
         B = x.shape[0]  # noqa: N806
 
         # Patch embedding: (B, C, H, W) -> (B, num_patches, hidden_size)
@@ -173,7 +197,8 @@ class VisionTransformer(nn.Module, PyTorchModelHubMixin):
         x = torch.cat((cls_tokens, x), dim=1)
 
         # Add position embeddings
-        x = x + self.pos_embed
+        # x = x + self.pos_embed
+        x = x + self.interpolate_pos_encoding(x, w, h)
         x = self.pos_drop(x)
 
         # Apply transformer blocks

@@ -40,9 +40,9 @@ class PatchEmbedding(nn.Module):
             torch.Tensor: Output tensor of shape (batch_size, num_patches, embed_dim).
         """
         B, C, H, W = x.shape  # noqa: N806
-        assert H == self.image_size and W == self.image_size, (
-            f"Input image size ({H}x{W}) doesn't match model ({self.image_size}x{self.image_size})"
-        )
+        # assert H == self.image_size and W == self.image_size, (
+        #     f"Input image size ({H}x{W}) doesn't match model ({self.image_size}x{self.image_size})"
+        # )
 
         x = self.proj(x)
         x = x.flatten(2)

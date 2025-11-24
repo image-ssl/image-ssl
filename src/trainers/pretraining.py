@@ -11,6 +11,7 @@ from tqdm.auto import tqdm
 from models import VisionTransformer, VisionTransformerWithPretrainingHeads
 
 from .base import BaseTrainer
+from .losses.dino_loss import DINOLoss
 
 
 class PreTrainer(BaseTrainer):
@@ -239,11 +240,27 @@ class PreTrainer(BaseTrainer):
         if save_best and loss_metric_for_best_model not in ["train", "val"]:
             raise ValueError("loss_metric_for_best_model must be either 'train' or 'val'.")
 
+        # initialize dino loss
+        dino_loss = DINOLoss(
+            out_dim=65536,
+            start_teacher_temp=0.04,
+            end_teacher_temp=0.04,
+            n_crops=2 + 6, # TODO: make this dynamic based on number of local and global views
+            n_epochs=num_epochs,
+            warmup_epochs=0,
+        ).to(device)
+
         # training loop
         for epoch in range(num_epochs):
             total_epoch_loss = 0.0
             epoch_step = 0
             for batch in train_loader:
+                # step weight decay scheduler
+                if self.wd_schedule is not None:
+                    for i, param_group in enumerate(self.optimizer.param_groups):
+                        if i == 0:  # only the first group is regularized
+                            param_group["weight_decay"] = self.wd_schedule[epoch_step]
+
                 # track steps
                 epoch_step += 1
                 global_step += 1
@@ -260,33 +277,15 @@ class PreTrainer(BaseTrainer):
                 num_objectives = len(batch)
                 total_batch_loss = 0.0
 
-                for transformation in batch:
-                    # move batch to device
-                    images = batch[transformation].to(device)  # [B, C, H, W] or [B, num_views, C, H, W]
-                    batch_size = images.shape[0]
-                    # reshape if multiple views
-                    if len(images.shape) == 5:
-                        num_views = images.shape[1]
-                        # reshape to (num_views*B, C, H, W) for processing
-                        images = images.view(num_views * batch_size, *images.shape[2:])
-                    # else: shape is already (B, C, H, W) for single-view methods
+                # move batch to device
+                images = [im.to(device) for im in batch] # List of 2 global views + n local views of [B, C, H, W] each
+                # run forward pass for teacher and student
+                teacher_outputs = self.teacher_model(images[:2])
+                student_outputs = self.student_model(images)
+                loss = dino_loss(student_outputs, teacher_outputs, epoch)
+                pass
 
-                    # forward pass
-                    # outputs is VisionTransformerWithPretrainingHeadsOutput with:
-                    #   - outputs['encoder']: VisionTransformerOutput with .last_hidden_state and .cls
-                    #   - outputs[transformation]: embeddings from the specific head (e.g., 'simclr')
-                    output = self.model(images)
-                    embeddings = output[transformation]
-
-                    # compute loss based on transformation type
-                    if transformation == "simclr":
-                        loss = self.compute_simclr_loss(embeddings, kwargs.get("simclr_temperature", 0.5))
-                        total_batch_loss += loss
-                    else:
-                        raise NotImplementedError(f"Unsupported pre-training objective: {transformation}")
-
-                    # update log dict
-                    log_dict[f"loss_{transformation}"] = loss.item()
+                # TODO: Complete training loop
 
                 # average loss across objectives
                 loss = total_batch_loss / num_objectives
