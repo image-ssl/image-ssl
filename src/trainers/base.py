@@ -7,9 +7,9 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
 import torch
 import wandb
-import numpy as np
 from huggingface_hub import HfApi, ModelHubMixin, hf_hub_download
 
 from models import VisionTransformer, VisionTransformerWithPretrainingHeads
@@ -130,6 +130,7 @@ class BaseTrainer(ModelHubMixin):
 
         Args:
             total_steps (int): Total number of training steps.
+
         Returns:
             tuple: weight decay scheduler and momentum scheduler (or None if not used).
         """
