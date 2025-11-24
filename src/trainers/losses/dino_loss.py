@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.Functional as F
-import torch.distributed as dist
 import numpy as np
 
 class DINOLoss(nn.Module):
@@ -41,8 +40,7 @@ class DINOLoss(nn.Module):
     @torch.no_grad()
     def update_center(self, teacher_out):
         batch_center = torch.sum(teacher_out, dim=0, keepdim=True)
-        dist.all_reduce(batch_center)
-        batch_center = batch_center / (len(teacher_out) * dist.get_world_size())
+        batch_center = batch_center / len(teacher_out)
 
         self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 
