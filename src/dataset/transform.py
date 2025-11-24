@@ -10,12 +10,27 @@ from torchvision import transforms
 class GaussianBlur:
     """Apply Gaussian Blur to the PIL image."""
 
-    def __init__(self, p=0.5, radius_min=0.1, radius_max=2.0):
+    def __init__(self, p: float = 0.5, radius_min: float = 0.1, radius_max: float = 2.0) -> None:
+        """Initialize GaussianBlur.
+
+        Args:
+            p (float): Probability of applying the blur.
+            radius_min (float): Minimum radius for the blur.
+            radius_max (float): Maximum radius for the blur.
+        """
         self.prob = p
         self.radius_min = radius_min
         self.radius_max = radius_max
 
-    def __call__(self, img):
+    def __call__(self, img: Image.Image) -> Image.Image:
+        """Apply Gaussian Blur to the image with probability p.
+
+        Args:
+            img (PIL.Image): Input image.
+
+        Returns:
+            PIL.Image: Blurred image or original image.
+        """
         do_it = random.random() <= self.prob
         if not do_it:
             return img
@@ -26,10 +41,23 @@ class GaussianBlur:
 class Solarization:
     """Apply Solarization to the PIL image."""
 
-    def __init__(self, p):
+    def __init__(self, p: float) -> None:
+        """Initialize Solarization.
+
+        Args:
+            p (float): Probability of applying solarization.
+        """
         self.p = p
 
-    def __call__(self, img):
+    def __call__(self, img: Image.Image) -> Image.Image:
+        """Apply Solarization to the image with probability p.
+
+        Args:
+            img (PIL.Image): Input image.
+
+        Returns:
+            PIL.Image: Solarized image or original image.
+        """
         if random.random() < self.p:
             return ImageOps.solarize(img)
         return img
@@ -71,7 +99,7 @@ class ImageTransform:
         - 6 local crops (smaller, minimal augmentation, size 36-48 pixels)
 
         Returns:
-            tuple[dict[str, transforms.Compose], int]: Dictionary with 'global' and 'local' transforms, and total num_views (8).
+            tuple[dict[str, transforms.Compose], int]: Dictionary with transforms and total num_views.
         """
         flip_and_color_jitter = transforms.Compose(
             [
