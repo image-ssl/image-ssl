@@ -14,6 +14,9 @@ def create_pretrain_dataloaders(
     image_size: int,
     transformation_types: list[str],
     seed: int = 42,
+    num_views: int = 2,
+    crop_scale: tuple[float, float] = (0.15, 1.0),
+    crop_size: int | None = None,
 ) -> tuple[DataLoader, DataLoader | None]:
     """Create train and optional validation DataLoaders for SSL pretraining.
 
@@ -23,6 +26,10 @@ def create_pretrain_dataloaders(
         image_size (int): Size to which images are resized/cropped.
         transformation_types (list[str]): Types of transformation types.
         seed (int): Random seed for dataset splitting. Default=42.
+        num_views (int): Number of augmented views to create per image. Default=2.
+        crop_scale (tuple[float, float]): Scale range for RandomResizedCrop (min, max).
+                                         Lower values = smaller crops. Default=(0.15, 1.0).
+        crop_size (int | None): Final crop size. If None, uses image_size. Default=None.
 
     Returns:
         tuple[train_loader, val_loader | None]: DataLoaders for train and val (val_loader=None if val_split is None).
@@ -32,6 +39,9 @@ def create_pretrain_dataloaders(
     transform = ImageTransform(
         image_size=image_size,
         transformation_types=transformation_types,
+        num_views=num_views,
+        crop_scale=crop_scale,
+        crop_size=crop_size,
     )
     dataset = ImageTransformDataset(hf_dataset, transform=transform)
 
