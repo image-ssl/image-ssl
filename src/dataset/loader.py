@@ -12,12 +12,11 @@ def create_pretrain_dataloaders(
     val_split: float | None,
     batch_size: int,
     image_size: int,
-    transformation_types: list[str],
-    seed: int = 42,
     num_local_crops: int = 6,
     local_crop_size: int = 36,
     global_crops_scale: tuple[float, float] = (0.4, 1.0),
     local_crops_scale: tuple[float, float] = (0.05, 0.4),
+    seed: int = 42,
 ) -> tuple[DataLoader, DataLoader | None]:
     """Create train and optional validation DataLoaders for SSL pretraining.
 
@@ -25,12 +24,11 @@ def create_pretrain_dataloaders(
         val_split (float | None): Fraction of dataset to use as validation (0.0-1.0). None = no val set.
         batch_size (int): Batch size for DataLoader.
         image_size (int): Size to which images are resized/cropped.
-        transformation_types (list[str]): Types of transformation types.
-        seed (int): Random seed for dataset splitting. Default=42.
         num_local_crops (int): Number of local crops for multi-crop (DINO). Default=6.
         local_crop_size (int): Size of local crops for multi-crop (DINO). Default=36.
         global_crops_scale (tuple[float, float]): Scale range for global crops. Default (0.4, 1.0).
         local_crops_scale (tuple[float, float]): Scale range for local crops. Default (0.05, 0.4).
+        seed (int): Random seed for dataset splitting. Default=42.
 
     Returns:
         tuple[train_loader, val_loader | None]: DataLoaders for train and val (val_loader=None if val_split is None).
@@ -39,7 +37,6 @@ def create_pretrain_dataloaders(
     hf_dataset = load_dataset("tsbpp/fall2025_deeplearning", split="train")
     transform = ImageTransform(
         image_size=image_size,
-        transformation_types=transformation_types,
         num_local_crops=num_local_crops,
         local_crop_size=local_crop_size,
         global_crops_scale=global_crops_scale,

@@ -41,7 +41,6 @@ class ImageTransform:
     def __init__(
         self,
         image_size: int,
-        transformation_types: list[str],
         num_local_crops: int = 6,
         local_crop_size: int = 36,
         global_crops_scale: tuple[float, float] = (0.4, 1.0),
@@ -51,26 +50,18 @@ class ImageTransform:
 
         Args:
             image_size (int): Size to which images are resized/cropped.
-            transformation_types (list[str]): Types of transformation pipelines.
             num_local_crops (int): Number of local crops for multi-crop (DINO). Default=6.
             local_crop_size (int): Size of local crops for multi-crop (DINO). Default=36.
             global_crops_scale (tuple[float, float]): Scale range for global crops. Default (0.4, 1.0).
             local_crops_scale (tuple[float, float]): Scale range for local crops. Default (0.05, 0.4).
         """
         self.image_size = image_size
-        self.transformation_types = transformation_types
         self.local_crop_size = local_crop_size
         self.num_local_crops = num_local_crops
         self.global_crops_scale = global_crops_scale
         self.local_crops_scale = local_crops_scale
 
-        self.transforms, self.num_views = dict(), dict()
-        for t in transformation_types:
-            if t == "dino":
-                # DINO v1: 2 global crops + n local crops
-                self.transforms[t], self.num_views[t] = self._init_dino_transform()
-            else:
-                raise NotImplementedError(f"Transformation type '{t}' not supported.")
+        self.transforms, self.num_views = self._init_dino_transform()
 
     def _init_dino_transform(self) -> tuple[dict[str, transforms.Compose], int]:
         """Initialize DINO v1 multi-crop transform pipeline.
@@ -156,8 +147,8 @@ class ImageTransform:
         """
         # Return the specified number of views
         out = list()
-        out.append(self.transforms["dino"]["global_1"](x))
-        out.append(self.transforms["dino"]["global_2"](x))
+        out.append(self.transforms["global_1"](x))
+        out.append(self.transforms["global_2"](x))
         for _ in range(self.num_local_crops):
-            out.append(self.transforms["dino"]["local"](x))
+            out.append(self.transforms["local"](x))
         return out
