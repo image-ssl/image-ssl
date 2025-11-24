@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin
 
+from src.models.modules.dino import DINOHead
 from .vit import VisionTransformer
-from .dino import DINOHead
 
 
 class VisionTransformerWithPretrainingHeadsOutput:
@@ -97,45 +97,24 @@ class VisionTransformerWithPretrainingHeads(nn.Module, PyTorchModelHubMixin):
         # Initialize pre-training heads based on specified objectives
         self.heads = nn.ModuleDict()
         for objective in pretrain_objectives:
-            if objective == "simclr":
-                self.heads[objective] = self._init_simclr_proj_head(hidden_size)
-            elif objective == "dino":
+            if objective == "dino":
+                # TODO: Add as args
+                # TODO: Check DinoHead param sizes for encoder sizes
                 self.heads[objective] = DINOHead(
                     in_dim=hidden_size,
-                    out_dim=65536,       # typical DINO out_dim
-                    use_bn=False,        # match original defaults unless you want BN
+                    out_dim=65536,  # typical DINO out_dim
+                    use_bn=False,  # match original defaults unless you want BN
                     norm_last_layer=True,
-                    nlayers=3,
+                    num_layers=3,
                     hidden_dim=2048,
                     bottleneck_dim=256,
                 )
             else:
                 raise NotImplementedError(f"Unsupported pre-training objective: {objective}")
 
-    def _init_simclr_proj_head(
-        self, in_features: int, projection_size: int = 128, hidden_size: int = 2048
-    ) -> nn.Sequential:
-        """Initialize the SimCLR projection head.
-
-        Args:
-            in_features (int): Input feature dimension.
-            projection_size (int): Output projection dimension.
-            hidden_size (int): Hidden layer dimension in the projection head.
-
-        Returns:
-            nn.Sequential: The SimCLR projection head.
-        """
-        return nn.Sequential(
-            nn.Linear(in_features, hidden_size),
-            nn.BatchNorm1d(hidden_size),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_size, projection_size),
-            nn.BatchNorm1d(projection_size),
-        )
-
     def forward(self, x: torch.Tensor) -> VisionTransformerWithPretrainingHeadsOutput:
         """Forward pass through the Vision Transformer and pre-training heads."""
-        cls = self.encoder(x)          # [B, hidden_size], CLS embedding
+        cls = self.encoder(x)  # [B, hidden_size], CLS embedding
         outputs = {"encoder": cls}
         for name, head in self.heads.items():
             outputs[name] = head(cls)  # <-- pass CLS directly

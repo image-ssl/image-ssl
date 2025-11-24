@@ -9,6 +9,7 @@ from pathlib import Path
 
 import torch
 import wandb
+import numpy as np
 from huggingface_hub import HfApi, ModelHubMixin, hf_hub_download
 
 from models import VisionTransformer, VisionTransformerWithPretrainingHeads
@@ -19,7 +20,8 @@ class BaseTrainer(ModelHubMixin):
 
     def __init__(
         self,
-        model: VisionTransformer | VisionTransformerWithPretrainingHeads,
+        student_model: VisionTransformer | VisionTransformerWithPretrainingHeads,
+        teacher_model: VisionTransformer | VisionTransformerWithPretrainingHeads,
         learning_rate: float,
         optimizer_class: str,
         scheduler_class: str,
@@ -43,10 +45,12 @@ class BaseTrainer(ModelHubMixin):
         self.scheduler = None
         self.optimizer_class = None
         self.scheduler_class = None
-        self.model = model
+        self.student_model = student_model
+        self.teacher_model = teacher_model
         self.learning_rate = learning_rate
-        self._init_optimizer(model, learning_rate, optimizer_class, **kwargs)
-        self._init_scheduler(scheduler_class, **kwargs)
+        self._init_optimizer(student_model, learning_rate, optimizer_class, **kwargs)
+        self._init_lr_scheduler(scheduler_class, **kwargs)
+        self.wd_schedule, self.momentum_schedule = self._init_additional_schedulers(**kwargs)
 
     def _init_optimizer(
         self,
@@ -78,7 +82,7 @@ class BaseTrainer(ModelHubMixin):
         else:
             raise NotImplementedError
 
-    def _init_scheduler(self, scheduler_class: str, **kwargs: dict) -> None:
+    def _init_lr_scheduler(self, scheduler_class: str, **kwargs: dict) -> None:
         """Initialize the learning rate scheduler.
 
         Args:
@@ -119,6 +123,28 @@ class BaseTrainer(ModelHubMixin):
             )
         else:
             self.scheduler = decreasing_lr_scheduler
+
+    @staticmethod
+    def _init_additional_schedulers(**kwargs: dict) -> tuple:
+        """Create additional schedulers for weight decay and momentum if needed.
+
+        Args:
+            total_steps (int): Total number of training steps.
+        Returns:
+            tuple: weight decay scheduler and momentum scheduler (or None if not used).
+        """
+        final_value = 0.4
+        base_value = 0.04
+        iters = np.arange(kwargs.get("num_steps"))
+        schedule = final_value + 0.5 * (base_value - final_value) * (1 + np.cos(np.pi * iters / len(iters)))
+        wd_schedule = np.concatenate((np.array([]), schedule))
+
+        final_value = 1.0
+        base_value = 0.996
+        iters = np.arange(kwargs.get("num_steps"))
+        schedule = final_value + 0.5 * (base_value - final_value) * (1 + np.cos(np.pi * iters / len(iters)))
+        momentum_schedule = np.concatenate((np.array([]), schedule))
+        return wd_schedule, momentum_schedule
 
     def init_hf_api(self) -> None:
         """Initialize the Hugging Face API client."""

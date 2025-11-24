@@ -18,7 +18,8 @@ class PreTrainer(BaseTrainer):
 
     def __init__(
         self,
-        model: VisionTransformer | VisionTransformerWithPretrainingHeads,
+        student_model: VisionTransformer | VisionTransformerWithPretrainingHeads,
+        teacher_model: VisionTransformer | VisionTransformerWithPretrainingHeads,
         learning_rate: float,
         optimizer_class: str,
         scheduler_class: str,
@@ -36,7 +37,7 @@ class PreTrainer(BaseTrainer):
         Returns:
             Trainer: An instance of the Trainer class.
         """
-        super().__init__(model, learning_rate, optimizer_class, scheduler_class, **kwargs)
+        super().__init__(student_model, teacher_model, learning_rate, optimizer_class, scheduler_class, **kwargs)
 
     def _get_model_attrs(self, model: nn.Module) -> dict:
         """Get model attributes for logging.
@@ -206,7 +207,7 @@ class PreTrainer(BaseTrainer):
                 entity=wandb_entity,
                 project=wandb_project,
                 name=wandb_name,
-                config=self._get_model_attrs(self.model),
+                config=self._get_model_attrs(self.student_model),
             )
 
         # Set up HuggingFace Hub Configuration
@@ -221,10 +222,10 @@ class PreTrainer(BaseTrainer):
         best_loss = float("inf") if save_best else None
 
         # reset model to training mode
-        self.model.train()
-        self.model.zero_grad()
+        self.student_model.train()
+        self.student_model.zero_grad()
         torch.cuda.empty_cache()
-        device = next(self.model.parameters()).device
+        device = next(self.student_model.parameters()).device
 
         # preliminary checks
         if loss_metric_for_best_model == "val" and val_loader is None:
@@ -248,7 +249,7 @@ class PreTrainer(BaseTrainer):
                 global_step += 1
 
                 # zero gradients
-                self.model.train()
+                self.student_model.train()
                 self.optimizer.zero_grad()
 
                 # create log dict
