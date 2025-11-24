@@ -6,6 +6,7 @@ import numpy as np
 import torch
 
 import dataset
+
 import models
 import trainers
 import utils
@@ -31,22 +32,30 @@ if __name__ == "__main__":
         image_size=args.image_size,
         transformation_types=args.pretrain_objectives,  # TODO: Rename for clarity?
         seed=args.seed,
+        num_local_crops=args.num_local_crops,
+        local_crop_size=args.local_crop_size,
+        global_crops_scale=args.global_crops_scale,
+        local_crops_scale=args.local_crops_scale,
     )
     print(f"Loaded train dataloader with {len(train_loader.dataset)} samples.")
     if val_loader is not None:
         print(f"Loaded val dataloader with {len(val_loader.dataset)} samples.")
 
-    # initialize model
-    model = models.init_model(args, device, cls="pretraining")
-    total_params = sum(p.numel() for p in model.parameters())
-    print(model)
+    # initialize models
+    student_model = models.init_model(args, device, cls="pretraining")
+    teacher_model = models.init_model(args, device, cls="pretraining")
+    teacher_model.load_state_dict(student_model.state_dict())
+    for param in teacher_model.parameters():
+        param.requires_grad = False
+    total_params = sum(p.numel() for p in student_model.parameters())
+    print(student_model)
     print(
         f"Instantiated ViT with:\n\ttotal #params: {total_params / 10**6:.2f}M "
-        f"\n\tencoder #params: {sum(p.numel() for p in model.encoder.parameters()) / 10**6:.2f}M"
+        f"\n\tencoder #params: {sum(p.numel() for p in student_model.encoder.parameters()) / 10**6:.2f}M"
     )
 
     # initialize trainer
-    trainer = trainers.init_trainer(model, train_loader, args, cls="pretraining")
+    trainer = trainers.init_trainer(student_model, teacher_model, train_loader, args, cls="pretraining")
 
     # train the model
     trainer.train(

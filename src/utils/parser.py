@@ -24,7 +24,7 @@ def parse_pretrain_args() -> argparse.Namespace:
         "--pretrain-objectives",
         type=str,
         nargs="+",
-        default=["simclr"],
+        default=["dino"],
         choices=["simclr", "mae", "byol", "dino"],
         help="List of SSL objectives to train on. Supports multiple objectives like 'simclr mae'.",
     )
@@ -51,20 +51,20 @@ def parse_pretrain_args() -> argparse.Namespace:
     parser.add_argument(
         "--hidden-size",
         type=int,
-        default=768,
-        help="Dimension of the encoder layers. Default=768.",
+        default=384,
+        help="Dimension of the encoder layers. Default=256.",
     )
     parser.add_argument(
         "--num-hidden-layers",
         type=int,
         default=12,
-        help="Number of hidden layers in the model. Default=12.",
+        help="Number of hidden layers in the model. Default=6.",
     )
     parser.add_argument(
         "--num-attention-heads",
         type=int,
-        default=12,
-        help="Number of attention heads in the model. Default=12.",
+        default=6,
+        help="Number of attention heads in the model. Default=6.",
     )
     parser.add_argument(
         "--qkv-bias",
@@ -74,7 +74,7 @@ def parse_pretrain_args() -> argparse.Namespace:
     parser.add_argument(
         "--intermediate-size",
         type=int,
-        default=3072,
+        default=1536,
         help="Dimension of the feedforward layers. Default=3072.",
     )
     parser.add_argument(
@@ -94,6 +94,32 @@ def parse_pretrain_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Dropout probability for stochastic depth. Default=0.0.",
+    )
+    parser.add_argument(
+        "--num-local-crops",
+        type=int,
+        default=6,
+        help="Number of local crops for multi-crop (DINO). Default=6.",
+    )
+    parser.add_argument(
+        "--local-crop-size",
+        type=int,
+        default=36,
+        help="Size of local crops for multi-crop (DINO). Default=36.",
+    )
+    parser.add_argument(
+        "--global-crops-scale",
+        type=float,
+        nargs=2,
+        default=(0.4, 1.0),
+        help="Scale range for global crops (DINO). Default=(0.4, 1.0).",
+    )
+    parser.add_argument(
+        "--local-crops-scale",
+        type=float,
+        nargs=2,
+        default=(0.05, 0.4),
+        help="Scale range for local crops (DINO). Default=(0.05, 0.4).",
     )
 
     # Training hyperparameters

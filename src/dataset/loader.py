@@ -14,6 +14,10 @@ def create_pretrain_dataloaders(
     image_size: int,
     transformation_types: list[str],
     seed: int = 42,
+    num_local_crops: int = 6,
+    local_crop_size: int = 36,
+    global_crops_scale: tuple[float, float] = (0.4, 1.0),
+    local_crops_scale: tuple[float, float] = (0.05, 0.4),
 ) -> tuple[DataLoader, DataLoader | None]:
     """Create train and optional validation DataLoaders for SSL pretraining.
 
@@ -23,6 +27,10 @@ def create_pretrain_dataloaders(
         image_size (int): Size to which images are resized/cropped.
         transformation_types (list[str]): Types of transformation types.
         seed (int): Random seed for dataset splitting. Default=42.
+        num_local_crops (int): Number of local crops for multi-crop (DINO). Default=6.
+        local_crop_size (int): Size of local crops for multi-crop (DINO). Default=36.
+        global_crops_scale (tuple[float, float]): Scale range for global crops. Default (0.4, 1.0).
+        local_crops_scale (tuple[float, float]): Scale range for local crops. Default (0.05, 0.4).
 
     Returns:
         tuple[train_loader, val_loader | None]: DataLoaders for train and val (val_loader=None if val_split is None).
@@ -32,6 +40,10 @@ def create_pretrain_dataloaders(
     transform = ImageTransform(
         image_size=image_size,
         transformation_types=transformation_types,
+        num_local_crops=num_local_crops,
+        local_crop_size=local_crop_size,
+        global_crops_scale=global_crops_scale,
+        local_crops_scale=local_crops_scale,
     )
     dataset = ImageTransformDataset(hf_dataset, transform=transform)
 

@@ -12,7 +12,9 @@ TRAINER_REGISTRY = {
 }
 
 
-def init_trainer(model: nn.Module, train_loader: DataLoader, args: argparse.Namespace, cls: str) -> PreTrainer:
+def init_trainer(
+    student_model: nn.Module, teacher_model: nn.Module, train_loader: DataLoader, args: argparse.Namespace, cls: str
+) -> PreTrainer:
     """Initialize the Trainer with the given model and arguments.
 
     Args:
@@ -26,11 +28,11 @@ def init_trainer(model: nn.Module, train_loader: DataLoader, args: argparse.Name
     """
     cls = TRAINER_REGISTRY[cls]
     if args.checkpoint is not None:
-        return cls.from_pretrained(args.checkpoint, model=model)
+        return cls.from_pretrained(args.checkpoint, student_model=student_model, teacher_model=teacher_model)
     trainer_kwargs = vars(args).copy()
     trainer_kwargs.pop("model", None)  # TODO: I don't remember why I did this lol, check if needed
     trainer_kwargs.setdefault("num_steps", len(train_loader) * args.num_epochs)
-    return cls(model=model, **trainer_kwargs)
+    return cls(student_model=student_model, teacher_model=teacher_model, **trainer_kwargs)
 
 
 __all__ = ["PreTrainer"]
