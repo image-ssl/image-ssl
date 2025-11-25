@@ -4,8 +4,7 @@ import torch
 import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin
 
-from src.models.modules.dino import DINOHead
-
+from .modules.dino import DINOHead
 from .vit import VisionTransformer
 
 

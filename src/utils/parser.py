@@ -122,6 +122,24 @@ def parse_pretrain_args() -> argparse.Namespace:
         help="Bottleneck dimension in DINO head. Default=256.",
     )
     parser.add_argument(
+        "--dino-base-teacher-temp",
+        type=float,
+        default=0.04,
+        help="Base temperature for the DINO teacher. Default=0.04.",
+    )
+    parser.add_argument(
+        "--dino-final-teacher-temp",
+        type=float,
+        default=0.04,
+        help="Final temperature for the DINO teacher. Default=0.04.",
+    )
+    parser.add_argument(
+        "--dino-warmup-epochs",
+        type=int,
+        default=0,
+        help="Number of warmup epochs for DINO teacher temperature. Default=0.",
+    )
+    parser.add_argument(
         "--num-local-crops",
         type=int,
         default=6,
@@ -153,7 +171,7 @@ def parse_pretrain_args() -> argparse.Namespace:
         "--checkpoint", type=str, default=None, help="Path or model ID of a pre-trained checkpoint to load."
     )
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size for training. Default=16.")
-    parser.add_argument("--num-epochs", type=int, default=20, help="Number of training epochs. Default=20.")
+    parser.add_argument("--num-epochs", type=int, default=5, help="Number of training epochs. Default=20.")
     parser.add_argument(
         "--learning-rate",
         type=float,
@@ -209,13 +227,13 @@ def parse_pretrain_args() -> argparse.Namespace:
     parser.add_argument(
         "--log-interval-steps",
         type=int,
-        default=1000,
+        default=100,
         help="Log training loss every N steps. Default=1000.",
     )
     parser.add_argument(
         "--save-interval-steps",
         type=int,
-        default=2000,
+        default=1000,
         help="Save model checkpoint every N steps. Default=2000.",
     )
     parser.add_argument(

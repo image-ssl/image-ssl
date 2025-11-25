@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from src.models import VisionTransformer, VisionTransformerWithPretrainingHeads
+from models import VisionTransformer, VisionTransformerWithPretrainingHeads
 
 from .base import BaseTrainer
 from .losses import DINOLoss
@@ -41,6 +41,16 @@ class PreTrainer(BaseTrainer):
         """
         super().__init__(student_model, teacher_model, learning_rate, optimizer_class, scheduler_class, **kwargs)
 
+        # initialize dino loss
+        self._dino_loss = DINOLoss(
+            out_dim=kwargs.get("dino_out_dim"),
+            base_teacher_temp=kwargs.get("dino_base_teacher_temp"),
+            final_teacher_temp=kwargs.get("dino_final_teacher_temp"),
+            n_crops=2 + kwargs.get("num_local_crops"),
+            n_epochs=kwargs.get("num_epochs"),
+            warmup_epochs=kwargs.get("dino_warmup_epochs"),
+        ).to(next(self.student_model.parameters()).device)
+
     def _get_model_attrs(self, model: nn.Module) -> dict:
         """Get model attributes for logging.
 
@@ -58,8 +68,8 @@ class PreTrainer(BaseTrainer):
         return attrs
 
     @torch.no_grad()
-    def validate(self, val_loader: DataLoader, **kwargs: dict) -> dict[str, float]:
-        """Validate the ViT model.
+    def evaluate(self, val_loader: DataLoader, **kwargs: dict) -> dict[str, float]:
+        """Evaluate the ViT model.
 
         Args:
             val_loader (DataLoader): DataLoader for validation data.
@@ -138,39 +148,13 @@ class PreTrainer(BaseTrainer):
         torch.cuda.empty_cache()
         device = next(self.student_model.parameters()).device
 
-        # preliminary checks
-        if loss_metric_for_best_model == "val" and val_loader is None:
-            raise ValueError("Cannot use 'val' metric for best model when val_loader is None")
-        if upload_model_to_hub and repo_id is None:
-            raise ValueError("repo_id must be specified when upload_model_to_hub is True")
-        if len(train_loader) == 0:
-            raise ValueError("train_loader is empty.")
-        if val_loader is not None and len(val_loader) == 0:
-            raise ValueError("val_loader is empty.")
-        if save_best and loss_metric_for_best_model not in ["train", "val"]:
-            raise ValueError("loss_metric_for_best_model must be either 'train' or 'val'.")
-
-        # initialize dino loss
-        dino_loss = DINOLoss(
-            out_dim=65536,
-            start_teacher_temp=0.04,
-            end_teacher_temp=0.04,
-            n_crops=2 + 6,  # TODO: make this dynamic based on number of local and global views
-            n_epochs=num_epochs,
-            warmup_epochs=0,
-        ).to(device)
-
         # training loop
         for epoch in range(num_epochs):
-            total_epoch_loss = 0.0
+            total_epoch_train_loss = 0.0
+            total_epoch_val_loss = 0.0
+            num_val_runs = 0
             epoch_step = 0
             for batch in train_loader:
-                # step weight decay scheduler
-                if self.wd_schedule is not None:
-                    for i, param_group in enumerate(self.optimizer.param_groups):
-                        if i == 0:  # only the first group is regularized
-                            param_group["weight_decay"] = self.wd_schedule[epoch_step]
-
                 # track steps
                 epoch_step += 1
                 global_step += 1
@@ -184,45 +168,63 @@ class PreTrainer(BaseTrainer):
                     "epoch": float(f"{epoch + (epoch_step / steps_per_epoch):.2f}"),
                     "lr": self.optimizer.param_groups[0]["lr"],
                 }
-                num_objectives = len(batch)
-                total_batch_loss = 0.0
 
                 # move batch to device
-                images = [im.to(device) for im in batch]  # List of 2 global views + n local views of [B, C, H, W] each
+                images = [im.to(device) for im in batch]  # List of 2 global views + num_local_crops of [B, C, H, W]
                 # run forward pass for teacher and student
                 teacher_outputs = self.teacher_model(images[:2])
                 student_outputs = self.student_model(images)
-                loss = dino_loss(student_outputs, teacher_outputs, epoch)
-                pass
+                loss = self._dino_loss(student_outputs, teacher_outputs, epoch)
 
-                # TODO: Complete training loop
-
-                # average loss across objectives
-                loss = total_batch_loss / num_objectives
-                log_dict["loss"] = loss.item()
+                # record loss
+                log_dict["train_loss"] = loss.item()
 
                 # backward pass
                 loss.backward()
-                total_epoch_loss += loss.item()
+                total_epoch_train_loss += loss.item()
 
                 # clip gradients
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(self.student_model.parameters(), max_norm=1.0)
+
+                # for the first n epochs, cancel gradients for the last layer in the DinoHead
+                if epoch == 0:  # TODO: make this a parameter
+                    for name, p in self.student_model.named_parameters():
+                        if "last_layer" in name:
+                            p.grad = None
 
                 # optimizer step
                 self.optimizer.step()
 
-                # step the scheduler (note: we are stepping every batch)
-                self.scheduler.step()
+                # step weight decay scheduler
+                self.wd_scheduler.step()
+
+                # step lr scheduler
+                self.lr_scheduler.step()
+
+                # update the teacher model
+                with torch.no_grad():
+                    m = self.momentum_scheduler.step()
+                    for param_q, param_k in zip(self.student_model.parameters(), self.teacher_model.parameters()):
+                        param_k.data.mul_(m).add_((1 - m) * param_q.data)
 
                 # log metrics
                 if global_step % log_interval_steps == 0:
+                    # run validation if provided
+                    val_metrics = None
+                    if val_loader is not None:
+                        val_metrics = self.evaluate(val_loader, device)
+                        if val_metrics is not None:
+                            num_val_runs += 1
+                            log_dict["val_loss"] = val_metrics["loss"]
+                            total_epoch_val_loss += val_metrics["loss"]
+
                     log_str = json.dumps(
                         {
                             "epoch": float(f"{epoch + (epoch_step / steps_per_epoch):.2f}"),
                             "step": global_step,
+                            "train_loss": loss.item(),
+                            "val_loss": val_metrics["loss"] if val_metrics is not None else None,
                             "lr": self.optimizer.param_groups[0]["lr"],
-                            "loss": loss.item(),
-                            **{f"loss_{k}": v for k, v in log_dict.items() if k.startswith("loss_") and k != "loss"},
                         }
                     )
                     progress_bar.write(log_str)
@@ -253,41 +255,31 @@ class PreTrainer(BaseTrainer):
                         )
 
             # end of epoch logging
-            avg_epoch_loss = total_epoch_loss / epoch_step
-            log_str = json.dumps(
-                {
-                    "epoch": epoch + 1,
-                    "step": global_step,
-                    "loss_avg": avg_epoch_loss,
-                    "lr": self.optimizer.param_groups[0]["lr"],
-                }
-            )
+            avg_epoch_train_loss = total_epoch_train_loss / epoch_step
+            log_dict_epoch = {
+                "epoch": epoch + 1,
+                "step": global_step,
+                "avg_train_loss": avg_epoch_train_loss,
+                "lr": self.optimizer.param_groups[0]["lr"],
+            }
+            if val_loader is not None and num_val_runs > 0:
+                avg_epoch_val_loss = total_epoch_val_loss / num_val_runs
+                log_dict_epoch["avg_val_loss"] = avg_epoch_val_loss
+
+            log_str = json.dumps(log_dict_epoch)
             progress_bar.write(log_str)
             if self.wandb_writer is not None:
-                self.write_losses_to_wandb(global_step, {"loss_avg": avg_epoch_loss})
-
-            # run validation
-            if val_loader is not None:
-                val_losses = self.validate(val_loader, **kwargs)
-                log_str = json.dumps(
-                    {"epoch": epoch + 1, "step": global_step, **{f"val_{k}": v for k, v in val_losses.items()}}
-                )
-                progress_bar.write(log_str)
-                if self.wandb_writer is not None:
-                    self.write_losses_to_wandb(
-                        global_step,
-                        {f"val_{k}": v for k, v in val_losses.items()},
-                    )
+                self.write_losses_to_wandb(global_step, log_dict_epoch)
 
             # save best model checkpoint based on the specified metric
             if save_best and best_loss is not None:
                 # determine which loss metric to use
                 if loss_metric_for_best_model == "train":
-                    current_loss = avg_epoch_loss
-                elif loss_metric_for_best_model == "val" and val_loader is not None:
-                    current_loss = val_losses["loss_avg"]
+                    current_loss = avg_epoch_train_loss
+                elif loss_metric_for_best_model == "val" and num_val_runs > 0:
+                    current_loss = avg_epoch_val_loss
                 else:
-                    raise ValueError("Invalid loss_metric_for_best_model or missing val_loader.")
+                    raise ValueError("Invalid loss_metric_for_best_model.")
 
                 if current_loss < best_loss:
                     best_loss = current_loss
@@ -309,3 +301,7 @@ class PreTrainer(BaseTrainer):
                 repo_id=repo_id,
                 commit_message=f"Final model at Step {global_step}",
             )
+
+        # close wandb writer
+        if self.wandb_writer is not None:
+            self.wandb_writer.finish()
