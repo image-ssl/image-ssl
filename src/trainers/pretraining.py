@@ -56,40 +56,6 @@ class PreTrainer(BaseTrainer):
         attrs.update({"total_params": sum(p.numel() for p in model.parameters())})
         return attrs
 
-    def compute_simclr_loss(self, embeddings: torch.Tensor, temperature: float = 0.5) -> torch.Tensor:
-        """Compute the SimCLR loss (NT-Xent) for a batch of embeddings.
-
-        Args:
-            embeddings (torch.Tensor): Tensor of shape (2 * batch_size, embedding_dim)
-                                        containing embeddings for augmented pairs.
-            temperature (float): Temperature parameter for scaling logits. Default=0.5.
-
-        Returns:
-            torch.Tensor: Computed SimCLR loss (scalar).
-        """
-        batch_size = embeddings.shape[0] // 2
-
-        # L2 normalize embeddings
-        embeddings = nn.functional.normalize(embeddings, dim=1, p=2)
-        # Compute cosine similarity matrix (2N x 2N)
-        similarity_matrix = torch.matmul(embeddings, embeddings.T) / temperature
-
-        # Create labels: for sample i in first half, positive is i + batch_size
-        # For sample i in second half, positive is i - batch_size
-        labels = torch.cat(
-            [
-                torch.arange(batch_size, 2 * batch_size),  # [N, N+1, ..., 2N-1]
-                torch.arange(0, batch_size),  # [0, 1, ..., N-1]
-            ]
-        ).to(embeddings.device)
-
-        # Mask out self-similarity (diagonal)
-        mask = torch.eye(2 * batch_size, dtype=torch.bool, device=embeddings.device)
-        similarity_matrix = similarity_matrix.masked_fill(mask, -1e9)
-        # Compute cross-entropy loss
-        # Each row is treated as logits, with the label indicating the positive sample
-        return nn.functional.cross_entropy(similarity_matrix, labels)
-
     @torch.no_grad()
     def validate(self, val_loader: DataLoader, **kwargs: dict) -> dict[str, float]:
         """Validate the ViT model.

@@ -10,7 +10,7 @@ from pathlib import Path
 import torch
 import wandb
 from huggingface_hub import HfApi, ModelHubMixin, hf_hub_download
-from schedulers import MomentumScheduler, WeightDecayScheduler
+from .schedulers import MomentumScheduler, WeightDecayScheduler
 
 from models import VisionTransformer, VisionTransformerWithPretrainingHeads
 
@@ -77,7 +77,7 @@ class BaseTrainer(ModelHubMixin):
         self.optimizer_class = optimizer_class
         if self.optimizer_class == "adamw":
             self.optimizer = torch.optim.AdamW(
-                model.parameters(), lr=learning_rate, weight_decay=kwargs.get("base_wd", 0.04)
+                model.parameters(), lr=learning_rate, weight_decay=kwargs.get("base_wd")
             )
         elif self.optimizer_class == "adam":
             self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -140,8 +140,8 @@ class BaseTrainer(ModelHubMixin):
         """
         self.wd_scheduler = WeightDecayScheduler(
             self.optimizer,
-            kwargs.get("base_wd", 0.04),
-            kwargs.get("final_wd", 0.4),
+            kwargs.get("base_wd"),
+            kwargs.get("final_wd"),
             kwargs.get("total_steps"),
         )
 
@@ -156,8 +156,8 @@ class BaseTrainer(ModelHubMixin):
             None
         """
         self.momentum_scheduler = MomentumScheduler(
-            kwargs.get("base_momentum", 0.996),
-            kwargs.get("final_momentum", 1.0),
+            kwargs.get("base_momentum"),
+            kwargs.get("final_momentum"),
             kwargs.get("total_steps"),
         )
 
