@@ -140,4 +140,5 @@ class VisionTransformerWithPretrainingHeads(nn.Module, PyTorchModelHubMixin):
             output = torch.cat((output, _out))
             start_idx = end_idx
         # Run the head forward on the concatenated features.
+        # TODO: Wrap this around ViTWithPretrainingHeadsOutput for multiple heads.
         return self.heads["dino"](output)
