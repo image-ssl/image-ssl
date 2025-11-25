@@ -8,6 +8,7 @@ import torch.nn.functional as F  # noqa: N812
 
 class DINOLoss(nn.Module):
     """Implementation of the DINO v1 loss function."""
+
     def __init__(
         self,
         out_dim: int,
@@ -16,9 +17,9 @@ class DINOLoss(nn.Module):
         n_crops: int,
         n_epochs: int,
         warmup_epochs: int,
-        student_temp:float=0.1,
-        center_momentum: float=0.9,
-    )  -> None:
+        student_temp: float = 0.1,
+        center_momentum: float = 0.9,
+    ) -> None:
         """Initialize DINOLoss module.
 
         Args:
@@ -43,7 +44,7 @@ class DINOLoss(nn.Module):
             )
         )
 
-    def forward(self, student_output: torch.Tensor, teacher_output: torch.Tensor, epoch: int)-> torch.Tensor:
+    def forward(self, student_output: torch.Tensor, teacher_output: torch.Tensor, epoch: int) -> torch.Tensor:
         """Compute DINO loss.
 
         Args:

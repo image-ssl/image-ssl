@@ -77,9 +77,7 @@ class BaseTrainer(ModelHubMixin):
         """
         self.optimizer_class = optimizer_class
         if self.optimizer_class == "adamw":
-            self.optimizer = torch.optim.AdamW(
-                model.parameters(), lr=learning_rate, weight_decay=kwargs.get("base_wd")
-            )
+            self.optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=kwargs.get("base_wd"))
         elif self.optimizer_class == "adam":
             self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         elif self.optimizer_class == "sgd":

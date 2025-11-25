@@ -11,7 +11,7 @@ from tqdm.auto import tqdm
 from src.models import VisionTransformer, VisionTransformerWithPretrainingHeads
 
 from .base import BaseTrainer
-from .losses.dino_loss import DINOLoss
+from .losses import DINOLoss
 
 
 class PreTrainer(BaseTrainer):
@@ -29,7 +29,8 @@ class PreTrainer(BaseTrainer):
         """Initialize the Trainer.
 
         Args:
-            model (VisionTransformer | VisionTransformerWithPretrainingHeads): The model to be trained.
+            student_model (VisionTransformer | VisionTransformerWithPretrainingHeads): The model to be trained.
+            teacher_model (VisionTransformer | VisionTransformerWithPretrainingHeads): The teacher model.
             learning_rate (float): Learning rate for the optimizer.
             optimizer_class (str): Optimizer type.
             scheduler_class (str): Learning rate scheduler type.
