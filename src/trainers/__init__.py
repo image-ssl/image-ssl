@@ -30,8 +30,7 @@ def init_trainer(
     if args.checkpoint is not None:
         return cls.from_pretrained(args.checkpoint, student_model=student_model, teacher_model=teacher_model)
     trainer_kwargs = vars(args).copy()
-    trainer_kwargs.pop("model", None)  # TODO: I don't remember why I did this lol, check if needed
-    trainer_kwargs.setdefault("num_steps", len(train_loader) * args.num_epochs)
+    trainer_kwargs.setdefault("total_steps", len(train_loader) * args.num_epochs)
     return cls(student_model=student_model, teacher_model=teacher_model, **trainer_kwargs)
 
 

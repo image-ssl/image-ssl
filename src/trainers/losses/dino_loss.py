@@ -21,10 +21,12 @@ class DINOLoss(nn.Module):
         self.n_crops = n_crops
         self.center_momentum = center_momentum
         self.register_buffer("center", torch.zeros(1, out_dim))
-        self.teacher_temp_schedule = np.concatenate((
-            np.linspace(start_teacher_temp, end_teacher_temp, warmup_epochs),
-            np.ones(n_epochs - warmup_epochs) * end_teacher_temp,
-        ))
+        self.teacher_temp_schedule = np.concatenate(
+            (
+                np.linspace(start_teacher_temp, end_teacher_temp, warmup_epochs),
+                np.ones(n_epochs - warmup_epochs) * end_teacher_temp,
+            )
+        )
 
     def forward(self, student_output, teacher_output, epoch):
         student_out = student_output / self.student_temp

@@ -245,7 +245,7 @@ class PreTrainer(BaseTrainer):
             out_dim=65536,
             start_teacher_temp=0.04,
             end_teacher_temp=0.04,
-            n_crops=2 + 6, # TODO: make this dynamic based on number of local and global views
+            n_crops=2 + 6,  # TODO: make this dynamic based on number of local and global views
             n_epochs=num_epochs,
             warmup_epochs=0,
         ).to(device)
@@ -278,7 +278,7 @@ class PreTrainer(BaseTrainer):
                 total_batch_loss = 0.0
 
                 # move batch to device
-                images = [im.to(device) for im in batch] # List of 2 global views + n local views of [B, C, H, W] each
+                images = [im.to(device) for im in batch]  # List of 2 global views + n local views of [B, C, H, W] each
                 # run forward pass for teacher and student
                 teacher_outputs = self.teacher_model(images[:2])
                 student_outputs = self.student_model(images)
