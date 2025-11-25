@@ -18,7 +18,8 @@ def init_trainer(
     """Initialize the Trainer with the given model and arguments.
 
     Args:
-        model (nn.Module): The model to be trained.
+        student_model (nn.Module): The model to be trained.
+        teacher_model (nn.Module): The teacher model for knowledge distillation.
         train_loader (DataLoader): The training dataloader.
         args (argparse.Namespace): Parsed command-line arguments.
         cls (str): Trainer class type.
