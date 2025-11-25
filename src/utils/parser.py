@@ -210,7 +210,7 @@ def parse_pretrain_args() -> argparse.Namespace:
         help="Final momentum for the teacher model. Default=1.0.",
     )
     parser.add_argument(
-        "--scheduler-class",
+        "--lr-scheduler-class",
         type=str,
         default="cosine",
         choices=["cosine", "exponential"],

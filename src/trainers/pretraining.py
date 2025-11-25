@@ -23,7 +23,7 @@ class PreTrainer(BaseTrainer):
         teacher_model: VisionTransformer | VisionTransformerWithPretrainingHeads,
         learning_rate: float,
         optimizer_class: str,
-        scheduler_class: str,
+        lr_scheduler_class: str,
         **kwargs: dict,
     ) -> None:
         """Initialize the Trainer.
@@ -33,13 +33,13 @@ class PreTrainer(BaseTrainer):
             teacher_model (VisionTransformer | VisionTransformerWithPretrainingHeads): The teacher model.
             learning_rate (float): Learning rate for the optimizer.
             optimizer_class (str): Optimizer type.
-            scheduler_class (str): Learning rate scheduler type.
+            lr_scheduler_class (str): Learning rate scheduler type.
             **kwargs (dict): Additional arguments for the base trainer.
 
         Returns:
             Trainer: An instance of the Trainer class.
         """
-        super().__init__(student_model, teacher_model, learning_rate, optimizer_class, scheduler_class, **kwargs)
+        super().__init__(student_model, teacher_model, learning_rate, optimizer_class, lr_scheduler_class, **kwargs)
 
         # initialize dino loss
         self._dino_loss = DINOLoss(
