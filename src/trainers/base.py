@@ -9,10 +9,11 @@ from pathlib import Path
 
 import torch
 import wandb
-import numpy as np
 from huggingface_hub import HfApi, ModelHubMixin, hf_hub_download
 
 from models import VisionTransformer, VisionTransformerWithPretrainingHeads
+
+from .schedulers import MomentumScheduler, WeightDecayScheduler
 
 
 class BaseTrainer(ModelHubMixin):
@@ -24,16 +25,17 @@ class BaseTrainer(ModelHubMixin):
         teacher_model: VisionTransformer | VisionTransformerWithPretrainingHeads,
         learning_rate: float,
         optimizer_class: str,
-        scheduler_class: str,
+        lr_scheduler_class: str,
         **kwargs: dict,
     ) -> None:
         """Initialize the BaseTrainer.
 
         Args:
-            model (VisionTransformer | VisionTransformerWithPretrainingHeads): The model to be trained.
+            student_model (VisionTransformer | VisionTransformerWithPretrainingHeads): The student model to be trained.
+            teacher_model (VisionTransformer | VisionTransformerWithPretrainingHeads): The teacher model.
             learning_rate (float): Learning rate for the optimizer.
             optimizer_class (str): The optimizer class to use.
-            scheduler_class (str): The scheduler class to use.
+            lr_scheduler_class (str): The scheduler class to use for learning rate scheduling.
             **kwargs (dict): Additional keyword arguments for scheduler initialization.
         """
         super().__init__()
@@ -42,15 +44,18 @@ class BaseTrainer(ModelHubMixin):
         self.wandb_writer = None
         self.wandb_table = None
         self.optimizer = None
-        self.scheduler = None
+        self.lr_scheduler = None
+        self.wd_scheduler = None
+        self.momentum_scheduler = None
         self.optimizer_class = None
-        self.scheduler_class = None
+        self.lr_scheduler_class = None
         self.student_model = student_model
         self.teacher_model = teacher_model
         self.learning_rate = learning_rate
         self._init_optimizer(student_model, learning_rate, optimizer_class, **kwargs)
-        self._init_lr_scheduler(scheduler_class, **kwargs)
-        self.wd_schedule, self.momentum_schedule = self._init_additional_schedulers(**kwargs)
+        self._init_lr_scheduler(lr_scheduler_class, **kwargs)
+        self._init_wd_scheduler(**kwargs)
+        self._init_momentum_scheduler(**kwargs)
 
     def _init_optimizer(
         self,
@@ -72,9 +77,7 @@ class BaseTrainer(ModelHubMixin):
         """
         self.optimizer_class = optimizer_class
         if self.optimizer_class == "adamw":
-            self.optimizer = torch.optim.AdamW(
-                model.parameters(), lr=learning_rate, weight_decay=kwargs.get("weight_decay", 0.05)
-            )
+            self.optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=kwargs.get("base_wd"))
         elif self.optimizer_class == "adam":
             self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         elif self.optimizer_class == "sgd":
@@ -92,15 +95,15 @@ class BaseTrainer(ModelHubMixin):
         Returns:
             None
         """
-        self.scheduler_class = scheduler_class
+        self.lr_scheduler_class = scheduler_class
 
-        if self.scheduler_class == "cosine":
+        if self.lr_scheduler_class == "cosine":
             decreasing_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer,
-                T_max=kwargs.get("num_steps"),
+                T_max=kwargs.get("total_steps"),
                 eta_min=kwargs.get("eta_min", 1e-8),
             )
-        elif self.scheduler_class == "exponential":
+        elif self.lr_scheduler_class == "exponential":
             decreasing_lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
                 self.optimizer,
                 gamma=kwargs.get("gamma", 0.95),
@@ -111,40 +114,49 @@ class BaseTrainer(ModelHubMixin):
         # set up warmup scheduler if specified
         warmup_ratio = kwargs.get("warmup_ratio", 0.0)
         if warmup_ratio > 0.0:
-            period = kwargs.get("num_steps")
+            period = kwargs.get("total_steps")
             warmup_period = int(period * warmup_ratio)
             warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
                 self.optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_period
             )
-            self.scheduler = torch.optim.lr_scheduler.SequentialLR(
+            self.lr_scheduler = torch.optim.lr_scheduler.SequentialLR(
                 self.optimizer,
                 schedulers=[warmup_scheduler, decreasing_lr_scheduler],
                 milestones=[warmup_period],
             )
         else:
-            self.scheduler = decreasing_lr_scheduler
+            self.lr_scheduler = decreasing_lr_scheduler
 
-    @staticmethod
-    def _init_additional_schedulers(**kwargs: dict) -> tuple:
-        """Create additional schedulers for weight decay and momentum if needed.
+    def _init_wd_scheduler(self, **kwargs: dict) -> None:
+        """Initialize the weight decay scheduler.
 
         Args:
-            total_steps (int): Total number of training steps.
-        Returns:
-            tuple: weight decay scheduler and momentum scheduler (or None if not used).
-        """
-        final_value = 0.4
-        base_value = 0.04
-        iters = np.arange(kwargs.get("num_steps"))
-        schedule = final_value + 0.5 * (base_value - final_value) * (1 + np.cos(np.pi * iters / len(iters)))
-        wd_schedule = np.concatenate((np.array([]), schedule))
+            **kwargs (dict): Additional keyword arguments for scheduler initialization.
 
-        final_value = 1.0
-        base_value = 0.996
-        iters = np.arange(kwargs.get("num_steps"))
-        schedule = final_value + 0.5 * (base_value - final_value) * (1 + np.cos(np.pi * iters / len(iters)))
-        momentum_schedule = np.concatenate((np.array([]), schedule))
-        return wd_schedule, momentum_schedule
+        Returns:
+            None
+        """
+        self.wd_scheduler = WeightDecayScheduler(
+            self.optimizer,
+            kwargs.get("base_wd"),
+            kwargs.get("final_wd"),
+            kwargs.get("total_steps"),
+        )
+
+    def _init_momentum_scheduler(self, **kwargs: dict) -> None:
+        """Initialize the momentum scheduler.
+
+        Args:
+            **kwargs (dict): Additional keyword arguments for scheduler initialization.
+
+        Returns:
+            None
+        """
+        self.momentum_scheduler = MomentumScheduler(
+            kwargs.get("base_momentum"),
+            kwargs.get("final_momentum"),
+            kwargs.get("total_steps"),
+        )
 
     def init_hf_api(self) -> None:
         """Initialize the Hugging Face API client."""
@@ -188,23 +200,30 @@ class BaseTrainer(ModelHubMixin):
         torch.save(
             {
                 "optimizer": self.optimizer.state_dict(),
-                "scheduler": self.scheduler.state_dict(),
+                "lr_scheduler": self.lr_scheduler.state_dict(),
                 "optimizer_class": self.optimizer_class,
-                "scheduler_class": self.scheduler_class,
+                "lr_scheduler_class": self.lr_scheduler_class,
                 "learning_rate": self.learning_rate,
+                "wd_scheduler": self.wd_scheduler.state_dict(),
+                "momentum_scheduler": self.momentum_scheduler.state_dict(),
             },
             save_directory / "trainer_state.pt",
         )
         with open(save_directory / "training_config.json", "w") as f:
             json.dump(self.__dict__, f, indent=2, default=str)
-        self.model.save_pretrained(save_directory)
+        # Create two directories for student and teacher models
+        Path(save_directory / "student").mkdir(parents=True, exist_ok=True)
+        Path(save_directory / "teacher").mkdir(parents=True, exist_ok=True)
+        self.student_model.save_pretrained(save_directory / "student")
+        self.teacher_model.save_pretrained(save_directory / "teacher")
 
     @classmethod
     def _from_pretrained(
         cls,
         *,
         model_id: str,
-        model: VisionTransformer | VisionTransformerWithPretrainingHeads,
+        student_model: VisionTransformer | VisionTransformerWithPretrainingHeads,
+        teacher_model: VisionTransformer | VisionTransformerWithPretrainingHeads,
         revision: str | None = None,
         cache_dir: str | Path | None = None,
         force_download: bool = False,
@@ -219,7 +238,8 @@ class BaseTrainer(ModelHubMixin):
 
         Args:
             model_id (str): Model ID on HuggingFace Hub.
-            model (VisionTransformer | VisionTransformerWithPretrainingHeads): The model instance.
+            student_model (VisionTransformer | VisionTransformerWithPretrainingHeads): The student model instance.
+            teacher_model (VisionTransformer | VisionTransformerWithPretrainingHeads): The teacher model instance.
             revision (str | None): Specific model version to use.
             cache_dir (str | Path | None): Directory to cache the downloaded model.
             force_download (bool): Whether to force re-download of model files.
@@ -259,18 +279,18 @@ class BaseTrainer(ModelHubMixin):
 
         # Create new trainer instance
         trainer = cls(
-            model=model,
+            student_model=student_model,
+            teacher_model=teacher_model,
             learning_rate=trainer_state["learning_rate"],
             optimizer_class=trainer_state["optimizer_class"],
-            scheduler_class=trainer_state["scheduler_class"],
+            lr_scheduler_class=trainer_state["lr_scheduler_class"],
             **kwargs,
         )
 
         trainer.optimizer.load_state_dict(trainer_state["optimizer"])
-        trainer.scheduler.load_state_dict(trainer_state["scheduler"])
-        trainer.optimizer_class = trainer_state["optimizer_class"]
-        trainer.scheduler_class = trainer_state["scheduler_class"]
-        trainer.learning_rate = trainer_state["learning_rate"]
+        trainer.lr_scheduler.load_state_dict(trainer_state["lr_scheduler"])
+        trainer.wd_scheduler.load_state_dict(trainer_state["wd_scheduler"])
+        trainer.momentum_scheduler.load_state_dict(trainer_state["momentum_scheduler"])
         return trainer
 
     def write_losses_to_wandb(self, step: int, losses: dict) -> None:

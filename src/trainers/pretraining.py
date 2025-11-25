@@ -11,6 +11,7 @@ from tqdm.auto import tqdm
 from models import VisionTransformer, VisionTransformerWithPretrainingHeads
 
 from .base import BaseTrainer
+from .losses import DINOLoss
 
 
 class PreTrainer(BaseTrainer):
@@ -22,22 +23,33 @@ class PreTrainer(BaseTrainer):
         teacher_model: VisionTransformer | VisionTransformerWithPretrainingHeads,
         learning_rate: float,
         optimizer_class: str,
-        scheduler_class: str,
+        lr_scheduler_class: str,
         **kwargs: dict,
     ) -> None:
         """Initialize the Trainer.
 
         Args:
-            model (VisionTransformer | VisionTransformerWithPretrainingHeads): The model to be trained.
+            student_model (VisionTransformer | VisionTransformerWithPretrainingHeads): The model to be trained.
+            teacher_model (VisionTransformer | VisionTransformerWithPretrainingHeads): The teacher model.
             learning_rate (float): Learning rate for the optimizer.
             optimizer_class (str): Optimizer type.
-            scheduler_class (str): Learning rate scheduler type.
+            lr_scheduler_class (str): Learning rate scheduler type.
             **kwargs (dict): Additional arguments for the base trainer.
 
         Returns:
             Trainer: An instance of the Trainer class.
         """
-        super().__init__(student_model, teacher_model, learning_rate, optimizer_class, scheduler_class, **kwargs)
+        super().__init__(student_model, teacher_model, learning_rate, optimizer_class, lr_scheduler_class, **kwargs)
+
+        # initialize dino loss
+        self._dino_loss = DINOLoss(
+            out_dim=kwargs.get("dino_out_dim"),
+            base_teacher_temp=kwargs.get("dino_base_teacher_temp"),
+            final_teacher_temp=kwargs.get("dino_final_teacher_temp"),
+            n_crops=2 + kwargs.get("num_local_crops"),
+            n_epochs=kwargs.get("num_epochs"),
+            warmup_epochs=kwargs.get("dino_warmup_epochs"),
+        ).to(next(self.student_model.parameters()).device)
 
     def _get_model_attrs(self, model: nn.Module) -> dict:
         """Get model attributes for logging.
@@ -55,109 +67,34 @@ class PreTrainer(BaseTrainer):
         attrs.update({"total_params": sum(p.numel() for p in model.parameters())})
         return attrs
 
-    def compute_simclr_loss(self, embeddings: torch.Tensor, temperature: float = 0.5) -> torch.Tensor:
-        """Compute the SimCLR loss (NT-Xent) for a batch of embeddings.
-
-        Args:
-            embeddings (torch.Tensor): Tensor of shape (2 * batch_size, embedding_dim)
-                                        containing embeddings for augmented pairs.
-            temperature (float): Temperature parameter for scaling logits. Default=0.5.
-
-        Returns:
-            torch.Tensor: Computed SimCLR loss (scalar).
-        """
-        batch_size = embeddings.shape[0] // 2
-
-        # L2 normalize embeddings
-        embeddings = nn.functional.normalize(embeddings, dim=1, p=2)
-        # Compute cosine similarity matrix (2N x 2N)
-        similarity_matrix = torch.matmul(embeddings, embeddings.T) / temperature
-
-        # Create labels: for sample i in first half, positive is i + batch_size
-        # For sample i in second half, positive is i - batch_size
-        labels = torch.cat(
-            [
-                torch.arange(batch_size, 2 * batch_size),  # [N, N+1, ..., 2N-1]
-                torch.arange(0, batch_size),  # [0, 1, ..., N-1]
-            ]
-        ).to(embeddings.device)
-
-        # Mask out self-similarity (diagonal)
-        mask = torch.eye(2 * batch_size, dtype=torch.bool, device=embeddings.device)
-        similarity_matrix = similarity_matrix.masked_fill(mask, -1e9)
-        # Compute cross-entropy loss
-        # Each row is treated as logits, with the label indicating the positive sample
-        return nn.functional.cross_entropy(similarity_matrix, labels)
-
-    @torch.no_grad()
-    def validate(self, val_loader: DataLoader, **kwargs: dict) -> dict[str, float]:
-        """Validate the ViT model.
+    def evaluate(self, val_loader: DataLoader, epoch: int, device: torch.device) -> dict[str, float]:
+        """Evaluate the ViT model.
 
         Args:
             val_loader (DataLoader): DataLoader for validation data.
-            kwargs (dict): Additional arguments.
+            epoch (int): Current epoch number.
+            device (torch.device): Device to perform evaluation on.
 
         Returns:
             dict[str, float]: A dictionary of validation losses.
         """
-        # TODO: There is quite a bit of redundancy here with the training loop, refactor later
-        self.model.eval()
-        device = next(self.model.parameters()).device
-
-        total_val_loss = 0.0
+        self.student_model.eval()
+        self.teacher_model.eval()
+        total_loss = 0.0
         num_batches = 0
-        val_losses = dict()
-        progress_bar = tqdm(total=len(val_loader), desc="Running validation")
 
-        for batch in val_loader:
-            num_batches += 1
-            total_batch_loss = 0.0
-            num_objectives = len(batch)
+        with torch.no_grad():
+            for batch in val_loader:
+                images = [im.to(device) for im in batch]  # List of 2 global views + num_local_crops of [B, C, H, W]
+                # run forward pass for teacher and student
+                teacher_outputs = self.teacher_model(images[:2])
+                student_outputs = self.student_model(images)
+                loss = self._dino_loss(student_outputs, teacher_outputs, epoch, update_teacher=False)
+                total_loss += loss.item()
+                num_batches += 1
 
-            for transformation in batch:
-                # move batch to device
-                images = batch[transformation].to(device)  # [B, C, H, W] or [B, num_views, C, H, W]
-                batch_size = images.shape[0]
-                # reshape if multiple views
-                if len(images.shape) == 5:
-                    num_views = images.shape[1]
-                    # reshape to (num_views*B, C, H, W) for processing
-                    images = images.view(num_views * batch_size, *images.shape[2:])
-                # else: shape is already (B, C, H, W) for single-view methods
-
-                # forward pass
-                output = self.model(images)
-                embeddings = output[transformation]
-
-                # compute loss based on transformation type
-                if transformation == "simclr":
-                    loss = self.compute_simclr_loss(embeddings, kwargs.get("simclr_temperature", 0.5))
-                    total_batch_loss += loss.item()
-                else:
-                    raise NotImplementedError(f"Unsupported pre-training objective: {transformation}")
-
-                # track individual losses
-                val_losses.setdefault(transformation, 0.0)
-                val_losses[transformation] += loss.item()
-
-            # average loss across objectives
-            total_batch_loss = total_batch_loss / num_objectives
-            total_val_loss += total_batch_loss
-
-            progress_bar.set_postfix({"val_loss": f"{total_batch_loss:.4f}"})
-            progress_bar.update(1)
-
-        progress_bar.close()
-
-        # log average validation losses
-        avg_val_loss = total_val_loss / num_batches
-        val_losses = {f"loss_{k}": v / num_batches for k, v in val_losses.items()}
-        val_losses["loss_avg"] = avg_val_loss
-
-        # set model back to train mode
-        self.model.train()
-
-        return val_losses
+        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        return {"loss": avg_loss}
 
     def train(  # noqa: C901
         self,
@@ -227,21 +164,11 @@ class PreTrainer(BaseTrainer):
         torch.cuda.empty_cache()
         device = next(self.student_model.parameters()).device
 
-        # preliminary checks
-        if loss_metric_for_best_model == "val" and val_loader is None:
-            raise ValueError("Cannot use 'val' metric for best model when val_loader is None")
-        if upload_model_to_hub and repo_id is None:
-            raise ValueError("repo_id must be specified when upload_model_to_hub is True")
-        if len(train_loader) == 0:
-            raise ValueError("train_loader is empty.")
-        if val_loader is not None and len(val_loader) == 0:
-            raise ValueError("val_loader is empty.")
-        if save_best and loss_metric_for_best_model not in ["train", "val"]:
-            raise ValueError("loss_metric_for_best_model must be either 'train' or 'val'.")
-
         # training loop
         for epoch in range(num_epochs):
-            total_epoch_loss = 0.0
+            total_epoch_train_loss = 0.0
+            total_epoch_val_loss = 0.0
+            num_val_runs = 0
             epoch_step = 0
             for batch in train_loader:
                 # track steps
@@ -257,63 +184,63 @@ class PreTrainer(BaseTrainer):
                     "epoch": float(f"{epoch + (epoch_step / steps_per_epoch):.2f}"),
                     "lr": self.optimizer.param_groups[0]["lr"],
                 }
-                num_objectives = len(batch)
-                total_batch_loss = 0.0
 
-                for transformation in batch:
-                    # move batch to device
-                    images = batch[transformation].to(device)  # [B, C, H, W] or [B, num_views, C, H, W]
-                    batch_size = images.shape[0]
-                    # reshape if multiple views
-                    if len(images.shape) == 5:
-                        num_views = images.shape[1]
-                        # reshape to (num_views*B, C, H, W) for processing
-                        images = images.view(num_views * batch_size, *images.shape[2:])
-                    # else: shape is already (B, C, H, W) for single-view methods
+                # move batch to device
+                images = [im.to(device) for im in batch]  # List of 2 global views + num_local_crops of [B, C, H, W]
+                # run forward pass for teacher and student
+                teacher_outputs = self.teacher_model(images[:2])
+                student_outputs = self.student_model(images)
+                loss = self._dino_loss(student_outputs, teacher_outputs, epoch, update_teacher=True)
 
-                    # forward pass
-                    # outputs is VisionTransformerWithPretrainingHeadsOutput with:
-                    #   - outputs['encoder']: VisionTransformerOutput with .last_hidden_state and .cls
-                    #   - outputs[transformation]: embeddings from the specific head (e.g., 'simclr')
-                    output = self.model(images)
-                    embeddings = output[transformation]
-
-                    # compute loss based on transformation type
-                    if transformation == "simclr":
-                        loss = self.compute_simclr_loss(embeddings, kwargs.get("simclr_temperature", 0.5))
-                        total_batch_loss += loss
-                    else:
-                        raise NotImplementedError(f"Unsupported pre-training objective: {transformation}")
-
-                    # update log dict
-                    log_dict[f"loss_{transformation}"] = loss.item()
-
-                # average loss across objectives
-                loss = total_batch_loss / num_objectives
-                log_dict["loss"] = loss.item()
+                # record loss
+                log_dict["train_loss"] = loss.item()
 
                 # backward pass
                 loss.backward()
-                total_epoch_loss += loss.item()
+                total_epoch_train_loss += loss.item()
 
                 # clip gradients
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(self.student_model.parameters(), max_norm=1.0)
+
+                # for the first n epochs, cancel gradients for the last layer in the DinoHead
+                if epoch == 0:  # TODO: make this a parameter
+                    for name, p in self.student_model.named_parameters():
+                        if "last_layer" in name:
+                            p.grad = None
 
                 # optimizer step
                 self.optimizer.step()
 
-                # step the scheduler (note: we are stepping every batch)
-                self.scheduler.step()
+                # step weight decay scheduler
+                self.wd_scheduler.step()
+
+                # step lr scheduler
+                self.lr_scheduler.step()
+
+                # update the teacher model
+                with torch.no_grad():
+                    m = self.momentum_scheduler.step()
+                    for param_q, param_k in zip(self.student_model.parameters(), self.teacher_model.parameters()):
+                        param_k.data.mul_(m).add_((1 - m) * param_q.data)
 
                 # log metrics
                 if global_step % log_interval_steps == 0:
+                    # run validation if provided
+                    val_metrics = None
+                    if val_loader is not None:
+                        val_metrics = self.evaluate(val_loader, epoch, device)
+                        if val_metrics is not None:
+                            num_val_runs += 1
+                            log_dict["val_loss"] = val_metrics["loss"]
+                            total_epoch_val_loss += val_metrics["loss"]
+
                     log_str = json.dumps(
                         {
                             "epoch": float(f"{epoch + (epoch_step / steps_per_epoch):.2f}"),
                             "step": global_step,
+                            "train_loss": loss.item(),
+                            "val_loss": val_metrics["loss"] if val_metrics is not None else None,
                             "lr": self.optimizer.param_groups[0]["lr"],
-                            "loss": loss.item(),
-                            **{f"loss_{k}": v for k, v in log_dict.items() if k.startswith("loss_") and k != "loss"},
                         }
                     )
                     progress_bar.write(log_str)
@@ -344,41 +271,31 @@ class PreTrainer(BaseTrainer):
                         )
 
             # end of epoch logging
-            avg_epoch_loss = total_epoch_loss / epoch_step
-            log_str = json.dumps(
-                {
-                    "epoch": epoch + 1,
-                    "step": global_step,
-                    "loss_avg": avg_epoch_loss,
-                    "lr": self.optimizer.param_groups[0]["lr"],
-                }
-            )
+            avg_epoch_train_loss = total_epoch_train_loss / epoch_step
+            log_dict_epoch = {
+                "epoch": epoch + 1,
+                "step": global_step,
+                "avg_train_loss": avg_epoch_train_loss,
+                "lr": self.optimizer.param_groups[0]["lr"],
+            }
+            if val_loader is not None and num_val_runs > 0:
+                avg_epoch_val_loss = total_epoch_val_loss / num_val_runs
+                log_dict_epoch["avg_val_loss"] = avg_epoch_val_loss
+
+            log_str = json.dumps(log_dict_epoch)
             progress_bar.write(log_str)
             if self.wandb_writer is not None:
-                self.write_losses_to_wandb(global_step, {"loss_avg": avg_epoch_loss})
-
-            # run validation
-            if val_loader is not None:
-                val_losses = self.validate(val_loader, **kwargs)
-                log_str = json.dumps(
-                    {"epoch": epoch + 1, "step": global_step, **{f"val_{k}": v for k, v in val_losses.items()}}
-                )
-                progress_bar.write(log_str)
-                if self.wandb_writer is not None:
-                    self.write_losses_to_wandb(
-                        global_step,
-                        {f"val_{k}": v for k, v in val_losses.items()},
-                    )
+                self.write_losses_to_wandb(global_step, log_dict_epoch)
 
             # save best model checkpoint based on the specified metric
             if save_best and best_loss is not None:
                 # determine which loss metric to use
                 if loss_metric_for_best_model == "train":
-                    current_loss = avg_epoch_loss
-                elif loss_metric_for_best_model == "val" and val_loader is not None:
-                    current_loss = val_losses["loss_avg"]
+                    current_loss = avg_epoch_train_loss
+                elif loss_metric_for_best_model == "val" and num_val_runs > 0:
+                    current_loss = avg_epoch_val_loss
                 else:
-                    raise ValueError("Invalid loss_metric_for_best_model or missing val_loader.")
+                    raise ValueError("Invalid loss_metric_for_best_model.")
 
                 if current_loss < best_loss:
                     best_loss = current_loss
@@ -400,3 +317,7 @@ class PreTrainer(BaseTrainer):
                 repo_id=repo_id,
                 commit_message=f"Final model at Step {global_step}",
             )
+
+        # close wandb writer
+        if self.wandb_writer is not None:
+            self.wandb_writer.finish()

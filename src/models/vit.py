@@ -2,6 +2,8 @@
 
 # https://huggingface.co/docs/transformers/v4.57.1/en/model_doc/vit#transformers.ViTConfig
 
+import math
+
 import torch
 import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin
@@ -104,6 +106,9 @@ class VisionTransformer(nn.Module, PyTorchModelHubMixin):
         # Position embedding dropout
         self.pos_drop = nn.Dropout(p=dropout_hidden)
 
+        # Stochastic depth decay rule
+        dpr = [x.item() for x in torch.linspace(0, dropout_path, num_hidden_layers)]
+
         # Transformer blocks
         self.blocks = nn.ModuleList(
             [
@@ -114,9 +119,9 @@ class VisionTransformer(nn.Module, PyTorchModelHubMixin):
                     qkv_bias=qkv_bias,
                     hidden_drop=dropout_hidden,
                     attn_drop=dropout_attention,
-                    path_drop=dropout_path,
+                    path_drop=dpr[i],
                 )
-                for _ in range(num_hidden_layers)
+                for i in range(num_hidden_layers)
             ]
         )
 
@@ -154,7 +159,46 @@ class VisionTransformer(nn.Module, PyTorchModelHubMixin):
             nn.init.zeros_(m.bias)
             nn.init.ones_(m.weight)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _interpolate_pos_encoding(self, x: torch.Tensor, w: int, h: int) -> torch.Tensor:
+        """Interpolate position embeddings to match input size.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, num_patches + 1, hidden_size).
+            w (int): Width of the input image.
+            h (int): Height of the input image.
+
+        Returns:
+            torch.Tensor: Interpolated position embeddings.
+        """
+        num_patches = x.shape[1] - 1
+        num_patch_pos_embed = self.pos_embed.shape[1] - 1
+        if num_patches == num_patch_pos_embed and w == h:
+            # No interpolation needed
+            return self.pos_embed
+        # Interpolate position embeddings
+        cls_pos_embed = self.pos_embed[:, 0]
+        patch_pos_embed = self.pos_embed[:, 1:]
+        dim = x.shape[-1]
+        # Calculate target number of patches along width and height
+        w0 = w // self.patch_embed.patch_size
+        h0 = h // self.patch_embed.patch_size
+        # we add a small number to avoid floating point error in the interpolation
+        # see discussion at https://github.com/facebookresearch/dino/issues/8
+        w0, h0 = w0 + 0.1, h0 + 0.1
+        # Resize the grid of position embeddings
+        patch_pos_embed = nn.functional.interpolate(
+            patch_pos_embed.reshape(
+                1, int(math.sqrt(num_patch_pos_embed)), int(math.sqrt(num_patch_pos_embed)), dim
+            ).permute(0, 3, 1, 2),
+            scale_factor=(w0 / math.sqrt(num_patch_pos_embed), h0 / math.sqrt(num_patch_pos_embed)),
+            mode="bicubic",
+        )
+        assert int(w0) == patch_pos_embed.shape[-2] and int(h0) == patch_pos_embed.shape[-1]
+        # Reshape and permute to match the original position embedding shape
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
+        return torch.cat((cls_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
+
+    def forward(self, x: torch.Tensor) -> VisionTransformerOutput:
         """Forward pass of the Vision Transformer.
 
         Args:
@@ -163,7 +207,7 @@ class VisionTransformer(nn.Module, PyTorchModelHubMixin):
         Returns:
             torch.Tensor: CLS token output of shape (B, hidden_size).
         """
-        B = x.shape[0]  # noqa: N806
+        B, _, w, h = x.shape  # noqa: N806
 
         # Patch embedding: (B, C, H, W) -> (B, num_patches, hidden_size)
         x = self.patch_embed(x)
@@ -173,7 +217,7 @@ class VisionTransformer(nn.Module, PyTorchModelHubMixin):
         x = torch.cat((cls_tokens, x), dim=1)
 
         # Add position embeddings
-        x = x + self.pos_embed
+        x = x + self._interpolate_pos_encoding(x, w, h)
         x = self.pos_drop(x)
 
         # Apply transformer blocks
@@ -183,5 +227,5 @@ class VisionTransformer(nn.Module, PyTorchModelHubMixin):
         # Final layer norm
         x = self.norm(x)
 
-        # Return CLS token only
-        return VisionTransformerOutput(last_hidden_state=x, cls=x[:, 0])  # (B, hidden_size)
+        # Return the output
+        return VisionTransformerOutput(last_hidden_state=x, cls=x[:, 0])  # (B, tokens, hidden_size), (B, hidden_size)
