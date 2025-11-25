@@ -61,7 +61,12 @@ class VisionTransformerWithPretrainingHeads(nn.Module, PyTorchModelHubMixin):
         dropout_hidden: float,
         dropout_attention: float,
         dropout_path: float,
-        pretrain_objectives: list[str],
+        dino_out_dim: int,
+        dino_use_bn: bool,
+        dino_norm_last_layer: bool,
+        dino_num_layers: int,
+        dino_hidden_dim: int,
+        dino_bottleneck_dim: int,
     ) -> None:
         """Initialize the Vision Transformer with Pre-training Heads.
 
@@ -77,7 +82,12 @@ class VisionTransformerWithPretrainingHeads(nn.Module, PyTorchModelHubMixin):
             dropout_hidden (float): Dropout rate for MLP.
             dropout_attention (float): Dropout rate for attention.
             dropout_path (float): Dropout rate for stochastic depth.
-            pretrain_objectives (list[str]): List of pre-training objectives to include.
+            dino_out_dim (int): Output dimension for DINO head.
+            dino_use_bn (bool): Whether to use batch norm in DINO head.
+            dino_norm_last_layer (bool): Whether to normalize last layer in DINO head.
+            dino_num_layers (int): Number of layers in DINO head.
+            dino_hidden_dim (int): Hidden dimension in DINO head.
+            dino_bottleneck_dim (int): Bottleneck dimension in DINO head.
         """
         super().__init__()
 
@@ -95,31 +105,21 @@ class VisionTransformerWithPretrainingHeads(nn.Module, PyTorchModelHubMixin):
             dropout_path=dropout_path,
         )
 
-        # Initialize pre-training heads based on specified objectives
+        # Initialize pre-training head
         self.heads = nn.ModuleDict()
-        for objective in pretrain_objectives:
-            if objective == "dino":
-                # TODO: Add as args
-                # TODO: Check DinoHead param sizes for encoder sizes
-                self.heads[objective] = DINOHead(
-                    in_dim=hidden_size,
-                    out_dim=65536,  # typical DINO out_dim
-                    use_bn=False,  # match original defaults unless you want BN
-                    norm_last_layer=True,
-                    num_layers=3,
-                    hidden_dim=2048,
-                    bottleneck_dim=256,
-                )
-            else:
-                raise NotImplementedError(f"Unsupported pre-training objective: {objective}")
+        self.heads["dino"] = DINOHead(
+            in_dim=hidden_size,
+            out_dim=dino_out_dim,
+            use_bn=dino_use_bn,
+            norm_last_layer=dino_norm_last_layer,
+            num_layers=dino_num_layers,
+            hidden_dim=dino_hidden_dim,
+            bottleneck_dim=dino_bottleneck_dim,
+        )
 
     def forward(self, x: torch.Tensor | list[torch.Tensor]) -> VisionTransformerWithPretrainingHeadsOutput:
         """Forward pass through the Vision Transformer and pre-training heads."""
-        # cls = self.encoder(x)  # [B, hidden_size], CLS embedding
-        # outputs = {"encoder": cls}
-        # for name, head in self.heads.items():
-        #     outputs[name] = head(cls)  # <-- pass CLS directly
-        # return VisionTransformerWithPretrainingHeadsOutput(**outputs)
+        # Handle case where input is a list of tensors (multi-crop)
         idx_crops = torch.cumsum(
             torch.unique_consecutive(
                 torch.tensor([inp.shape[-1] for inp in x]),
@@ -127,8 +127,10 @@ class VisionTransformerWithPretrainingHeads(nn.Module, PyTorchModelHubMixin):
             )[1],
             0,
         )
+        # Encode all crops
         start_idx, output = 0, torch.empty(0).to(x[0].device)
         for end_idx in idx_crops:
+            # Forward pass through the encoder
             _out = self.encoder(torch.cat(x[start_idx:end_idx])).cls
             # The output is a tuple with XCiT model. See:
             # https://github.com/facebookresearch/xcit/blob/master/xcit.py#L404-L405
