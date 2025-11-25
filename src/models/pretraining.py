@@ -22,7 +22,7 @@ class VisionTransformerWithPretrainingHeadsOutput:
             setattr(self, key, value)
 
     def __getitem__(self, key: str) -> torch.Tensor:
-        """Allow dictionary-style access: output['simclr'].
+        """Allow dictionary-style access: output['head'].
 
         Args:
             key (str): The key corresponding to the desired output.
@@ -33,7 +33,7 @@ class VisionTransformerWithPretrainingHeadsOutput:
         return getattr(self, key)
 
     def __setitem__(self, key: str, value: torch.Tensor) -> None:
-        """Allow dictionary-style assignment: output['simclr'] = value.
+        """Allow dictionary-style assignment: output['head'] = value.
 
         Args:
             key (str): The key corresponding to the output to set.

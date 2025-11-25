@@ -10,9 +10,10 @@ from pathlib import Path
 import torch
 import wandb
 from huggingface_hub import HfApi, ModelHubMixin, hf_hub_download
-from .schedulers import MomentumScheduler, WeightDecayScheduler
 
 from models import VisionTransformer, VisionTransformerWithPretrainingHeads
+
+from .schedulers import MomentumScheduler, WeightDecayScheduler
 
 
 class BaseTrainer(ModelHubMixin):

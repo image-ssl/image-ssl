@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from models import VisionTransformer, VisionTransformerWithPretrainingHeads
+from src.models import VisionTransformer, VisionTransformerWithPretrainingHeads
 
 from .base import BaseTrainer
 from .losses.dino_loss import DINOLoss
@@ -67,64 +67,7 @@ class PreTrainer(BaseTrainer):
         Returns:
             dict[str, float]: A dictionary of validation losses.
         """
-        # TODO: There is quite a bit of redundancy here with the training loop, refactor later
-        self.model.eval()
-        device = next(self.model.parameters()).device
-
-        total_val_loss = 0.0
-        num_batches = 0
-        val_losses = dict()
-        progress_bar = tqdm(total=len(val_loader), desc="Running validation")
-
-        for batch in val_loader:
-            num_batches += 1
-            total_batch_loss = 0.0
-            num_objectives = len(batch)
-
-            for transformation in batch:
-                # move batch to device
-                images = batch[transformation].to(device)  # [B, C, H, W] or [B, num_views, C, H, W]
-                batch_size = images.shape[0]
-                # reshape if multiple views
-                if len(images.shape) == 5:
-                    num_views = images.shape[1]
-                    # reshape to (num_views*B, C, H, W) for processing
-                    images = images.view(num_views * batch_size, *images.shape[2:])
-                # else: shape is already (B, C, H, W) for single-view methods
-
-                # forward pass
-                output = self.model(images)
-                embeddings = output[transformation]
-
-                # compute loss based on transformation type
-                if transformation == "simclr":
-                    loss = self.compute_simclr_loss(embeddings, kwargs.get("simclr_temperature", 0.5))
-                    total_batch_loss += loss.item()
-                else:
-                    raise NotImplementedError(f"Unsupported pre-training objective: {transformation}")
-
-                # track individual losses
-                val_losses.setdefault(transformation, 0.0)
-                val_losses[transformation] += loss.item()
-
-            # average loss across objectives
-            total_batch_loss = total_batch_loss / num_objectives
-            total_val_loss += total_batch_loss
-
-            progress_bar.set_postfix({"val_loss": f"{total_batch_loss:.4f}"})
-            progress_bar.update(1)
-
-        progress_bar.close()
-
-        # log average validation losses
-        avg_val_loss = total_val_loss / num_batches
-        val_losses = {f"loss_{k}": v / num_batches for k, v in val_losses.items()}
-        val_losses["loss_avg"] = avg_val_loss
-
-        # set model back to train mode
-        self.model.train()
-
-        return val_losses
+        pass
 
     def train(  # noqa: C901
         self,

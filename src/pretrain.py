@@ -29,12 +29,11 @@ if __name__ == "__main__":
         val_split=args.val_split,
         batch_size=args.batch_size,
         image_size=args.image_size,
-        transformation_types=args.pretrain_objectives,  # TODO: Rename for clarity?
-        seed=args.seed,
         num_local_crops=args.num_local_crops,
         local_crop_size=args.local_crop_size,
         global_crops_scale=args.global_crops_scale,
         local_crops_scale=args.local_crops_scale,
+        seed=args.seed,
     )
     print(f"Loaded train dataloader with {len(train_loader.dataset)} samples.")
     if val_loader is not None:
@@ -43,9 +42,11 @@ if __name__ == "__main__":
     # initialize models
     student_model = models.init_model(args, device, cls="pretraining")
     teacher_model = models.init_model(args, device, cls="pretraining")
+    # copy student weights to teacher and freeze teacher parameters
     teacher_model.load_state_dict(student_model.state_dict())
     for param in teacher_model.parameters():
         param.requires_grad = False
+    # print model summary
     total_params = sum(p.numel() for p in student_model.parameters())
     print(student_model)
     print(
@@ -72,5 +73,4 @@ if __name__ == "__main__":
         save_interval_steps=args.save_interval_steps,
         save_latest=args.save_latest,
         save_best=args.save_best,
-        simclr_temperature=args.simclr_temperature,
     )

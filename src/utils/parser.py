@@ -20,14 +20,6 @@ def parse_pretrain_args() -> argparse.Namespace:
         default=None,
         help="Proportion of data to use for validation. Default=None (use full dataset for training).",
     )
-    parser.add_argument(
-        "--pretrain-objectives",
-        type=str,
-        nargs="+",
-        default=["dino"],
-        choices=["simclr", "mae", "byol", "dino"],
-        help="List of SSL objectives to train on. Supports multiple objectives like 'simclr mae'.",
-    )
 
     # Processor and model parameters
     parser.add_argument(
@@ -96,6 +88,40 @@ def parse_pretrain_args() -> argparse.Namespace:
         help="Dropout probability for stochastic depth. Default=0.0.",
     )
     parser.add_argument(
+        "--dino-out-dim",
+        type=int,
+        default=65536,
+        help="Output dimension for DINO head. Default=65536.",
+    )
+    parser.add_argument(
+        "--dino-use-bn",
+        action="store_true",
+        help="Whether to use batch norm in DINO head. Default=False.",
+    )
+    parser.add_argument(
+        "--dino-norm-last-layer",
+        action="store_true",
+        help="Whether to normalize last layer in DINO head. Default=False.",
+    )
+    parser.add_argument(
+        "--dino-num-layers",
+        type=int,
+        default=3,
+        help="Number of layers in DINO head. Default=3.",
+    )
+    parser.add_argument(
+        "--dino-hidden-dim",
+        type=int,
+        default=2048,
+        help="Hidden dimension in DINO head. Default=2048.",
+    )
+    parser.add_argument(
+        "--dino-bottleneck-dim",
+        type=int,
+        default=256,
+        help="Bottleneck dimension in DINO head. Default=256.",
+    )
+    parser.add_argument(
         "--num-local-crops",
         type=int,
         default=6,
@@ -142,10 +168,28 @@ def parse_pretrain_args() -> argparse.Namespace:
         help="Optimizer class to use. Default='adamw'.",
     )
     parser.add_argument(
-        "--weight-decay",
+        "--base-wd",
         type=float,
-        default=0.05,
+        default=0.04,
         help="Weight decay (L2 regularization) factor for the optimizer. Default=0.05.",
+    )
+    parser.add_argument(
+        "--final-wd",
+        type=float,
+        default=0.4,
+        help="Final weight decay value for weight decay scheduler. Default=0.4.",
+    )
+    parser.add_argument(
+        "--base-momentum",
+        type=float,
+        default=0.996,
+        help="Base momentum for the teacher model. Default=0.996.",
+    )
+    parser.add_argument(
+        "--final-momentum",
+        type=float,
+        default=1.0,
+        help="Final momentum for the teacher model. Default=1.0.",
     )
     parser.add_argument(
         "--scheduler-class",
@@ -159,12 +203,6 @@ def parse_pretrain_args() -> argparse.Namespace:
         type=float,
         default=0.1,
         help="Ratio of warmup steps to total training steps for the scheduler. Default=0.1.",
-    )
-    parser.add_argument(
-        "--simclr-temperature",
-        type=float,
-        default=0.5,
-        help="Temperature parameter for SimCLR loss. Default=0.5.",
     )
 
     # Logging and checkpointing
