@@ -58,7 +58,8 @@ class DINOLoss(nn.Module):
         student_out = student_output / self.student_temp
         student_out = student_out.chunk(self.n_crops)
 
-        temp = self.teacher_temp_schedule[epoch]
+        clamped_epoch = max(0, min(epoch, len(self.teacher_temp_schedule) - 1))
+        temp = self.teacher_temp_schedule[clamped_epoch]
         teacher_out = F.softmax((teacher_output - self.center) / temp, dim=-1)
         teacher_out = teacher_out.detach().chunk(2)
 

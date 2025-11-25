@@ -131,7 +131,6 @@ class BaseTrainer(ModelHubMixin):
         """Initialize the weight decay scheduler.
 
         Args:
-            optimizer (torch.optim.Optimizer): The optimizer for which to schedule weight decay.
             **kwargs (dict): Additional keyword arguments for scheduler initialization.
 
         Returns:
@@ -148,7 +147,6 @@ class BaseTrainer(ModelHubMixin):
         """Initialize the momentum scheduler.
 
         Args:
-            optimizer (torch.optim.Optimizer): The optimizer for which to schedule momentum.
             **kwargs (dict): Additional keyword arguments for scheduler initialization.
 
         Returns:

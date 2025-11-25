@@ -11,7 +11,7 @@ class DINOHead(nn.Module):
         self,
         in_dim: int,
         out_dim: int,
-        use_bn: int,
+        use_bn: bool,
         norm_last_layer: bool,
         num_layers: int,
         hidden_dim: int,

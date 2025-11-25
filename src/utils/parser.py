@@ -171,7 +171,7 @@ def parse_pretrain_args() -> argparse.Namespace:
         "--checkpoint", type=str, default=None, help="Path or model ID of a pre-trained checkpoint to load."
     )
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size for training. Default=16.")
-    parser.add_argument("--num-epochs", type=int, default=5, help="Number of training epochs. Default=20.")
+    parser.add_argument("--num-epochs", type=int, default=5, help="Number of training epochs. Default=5.")
     parser.add_argument(
         "--learning-rate",
         type=float,
@@ -189,7 +189,7 @@ def parse_pretrain_args() -> argparse.Namespace:
         "--base-wd",
         type=float,
         default=0.04,
-        help="Weight decay (L2 regularization) factor for the optimizer. Default=0.05.",
+        help="Weight decay (L2 regularization) factor for the optimizer. Default=0.04.",
     )
     parser.add_argument(
         "--final-wd",
@@ -228,13 +228,13 @@ def parse_pretrain_args() -> argparse.Namespace:
         "--log-interval-steps",
         type=int,
         default=100,
-        help="Log training loss every N steps. Default=1000.",
+        help="Log training loss every N steps. Default=100.",
     )
     parser.add_argument(
         "--save-interval-steps",
         type=int,
         default=1000,
-        help="Save model checkpoint every N steps. Default=2000.",
+        help="Save model checkpoint every N steps. Default=1000.",
     )
     parser.add_argument(
         "--save-dir",

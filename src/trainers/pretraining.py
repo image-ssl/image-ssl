@@ -68,17 +68,34 @@ class PreTrainer(BaseTrainer):
         return attrs
 
     @torch.no_grad()
-    def evaluate(self, val_loader: DataLoader, **kwargs: dict) -> dict[str, float]:
+    def evaluate(self, val_loader: DataLoader, device: torch.device, **kwargs: dict) -> dict[str, float]:
         """Evaluate the ViT model.
 
         Args:
             val_loader (DataLoader): DataLoader for validation data.
+            device (torch.device): Device to perform evaluation on.
             kwargs (dict): Additional arguments.
 
         Returns:
             dict[str, float]: A dictionary of validation losses.
         """
-        pass
+        self.student_model.eval()
+        self.teacher_model.eval()
+        total_loss = 0.0
+        num_batches = 0
+
+        with torch.no_grad():
+            for batch in val_loader:
+                images = [im.to(device) for im in batch]  # List of 2 global views + num_local_crops of [B, C, H, W]
+                # run forward pass for teacher and student
+                teacher_outputs = self.teacher_model(images[:2])
+                student_outputs = self.student_model(images)
+                loss = self._dino_loss(student_outputs, teacher_outputs, current_epoch=0)  # epoch not used in eval
+                total_loss += loss.item()
+                num_batches += 1
+
+        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        return {"loss": avg_loss}
 
     def train(  # noqa: C901
         self,
