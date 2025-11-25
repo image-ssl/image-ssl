@@ -67,7 +67,6 @@ class PreTrainer(BaseTrainer):
         attrs.update({"total_params": sum(p.numel() for p in model.parameters())})
         return attrs
 
-    @torch.no_grad()
     def evaluate(self, val_loader: DataLoader, epoch: int, device: torch.device) -> dict[str, float]:
         """Evaluate the ViT model.
 
