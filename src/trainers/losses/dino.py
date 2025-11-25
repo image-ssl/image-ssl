@@ -44,13 +44,16 @@ class DINOLoss(nn.Module):
             )
         )
 
-    def forward(self, student_output: torch.Tensor, teacher_output: torch.Tensor, epoch: int) -> torch.Tensor:
+    def forward(
+        self, student_output: torch.Tensor, teacher_output: torch.Tensor, epoch: int, update_teacher: bool = True
+    ) -> torch.Tensor:
         """Compute DINO loss.
 
         Args:
             student_output (torch.Tensor): Output from the student network.
             teacher_output (torch.Tensor): Output from the teacher network.
             epoch (int): Current training epoch.
+            update_teacher (bool): Whether to update the center using teacher output. Defaults to True.
 
         Returns:
             torch.Tensor: Computed DINO loss.
@@ -73,7 +76,8 @@ class DINOLoss(nn.Module):
                 total_loss += loss.mean()
                 term_count += 1
         total_loss /= term_count
-        self._update_center(teacher_output)
+        if update_teacher:
+            self._update_center(teacher_output)
         return total_loss
 
     @torch.no_grad()

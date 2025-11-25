@@ -68,13 +68,13 @@ class PreTrainer(BaseTrainer):
         return attrs
 
     @torch.no_grad()
-    def evaluate(self, val_loader: DataLoader, device: torch.device, **kwargs: dict) -> dict[str, float]:
+    def evaluate(self, val_loader: DataLoader, epoch: int, device: torch.device) -> dict[str, float]:
         """Evaluate the ViT model.
 
         Args:
             val_loader (DataLoader): DataLoader for validation data.
+            epoch (int): Current epoch number.
             device (torch.device): Device to perform evaluation on.
-            kwargs (dict): Additional arguments.
 
         Returns:
             dict[str, float]: A dictionary of validation losses.
@@ -90,7 +90,7 @@ class PreTrainer(BaseTrainer):
                 # run forward pass for teacher and student
                 teacher_outputs = self.teacher_model(images[:2])
                 student_outputs = self.student_model(images)
-                loss = self._dino_loss(student_outputs, teacher_outputs, current_epoch=0)  # epoch not used in eval
+                loss = self._dino_loss(student_outputs, teacher_outputs, epoch, update_teacher=False)
                 total_loss += loss.item()
                 num_batches += 1
 
@@ -191,7 +191,7 @@ class PreTrainer(BaseTrainer):
                 # run forward pass for teacher and student
                 teacher_outputs = self.teacher_model(images[:2])
                 student_outputs = self.student_model(images)
-                loss = self._dino_loss(student_outputs, teacher_outputs, epoch)
+                loss = self._dino_loss(student_outputs, teacher_outputs, epoch, update_teacher=True)
 
                 # record loss
                 log_dict["train_loss"] = loss.item()
@@ -229,7 +229,7 @@ class PreTrainer(BaseTrainer):
                     # run validation if provided
                     val_metrics = None
                     if val_loader is not None:
-                        val_metrics = self.evaluate(val_loader, device)
+                        val_metrics = self.evaluate(val_loader, epoch, device)
                         if val_metrics is not None:
                             num_val_runs += 1
                             log_dict["val_loss"] = val_metrics["loss"]
