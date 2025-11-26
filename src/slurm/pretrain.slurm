@@ -78,8 +78,8 @@ LOG_INTERVAL_STEPS=100         # Log training loss every N steps
 SAVE_INTERVAL_STEPS=1000        # Save model checkpoint every N steps
 SAVE_DIR="./saved_models"       # Directory to save checkpoints
 SAVE_LATEST=true               # Overwrite latest checkpoint instead of saving per step
-SAVE_BEST=true                 # Track and save best model based on training loss
-LOSS_METRIC_FOR_BEST_MODEL="val"    # Metric to use for best model: train, val
+SAVE_BEST=true                 # Track and save best model based on specified loss
+LOSS_METRIC_FOR_BEST_MODEL="train"    # Metric to use for best model: train, val
 
 # Weights & Biases configuration
 USE_WANDB=true                 # Enable W&B experiment tracking
