@@ -3,7 +3,7 @@
 import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader
-from torchvision import transforms
+from torchvision.transforms import functional as F  # noqa: N812
 from tqdm.auto import tqdm
 
 
@@ -20,15 +20,11 @@ def compute_dataloader_statistics(dataloader: DataLoader, device: str = "cuda") 
     sum_pixels = torch.zeros(3, device=device)
     sum_squared_pixels = torch.zeros(3, device=device)
     total_pixels = 0
-
     for batch in tqdm(dataloader, desc="Computing statistics"):
-        images = batch["image"].to(device)
-        batch_size, channels, height, width = images.shape
-        n_pixels = batch_size * height * width
-        images = images.view(channels, -1)
-        sum_pixels += images.sum(dim=1)
-        sum_squared_pixels += (images**2).sum(dim=1)
-        total_pixels += n_pixels
+        images = batch["image"].to(device, non_blocking=True)
+        sum_pixels += images.sum(dim=[0, 2, 3])
+        sum_squared_pixels += (images**2).sum(dim=[0, 2, 3])
+        total_pixels += images.shape[0] * images.shape[2] * images.shape[3]
 
     mean = sum_pixels / total_pixels
     variance = (sum_squared_pixels / total_pixels) - (mean**2)
@@ -36,30 +32,32 @@ def compute_dataloader_statistics(dataloader: DataLoader, device: str = "cuda") 
     return mean.cpu().tolist(), std.cpu().tolist()
 
 
-def _collate_fn(batch: list) -> dict:
-    """Custom collate function to transform images to tensors.
-
-    Args:
-        batch (list): List of dataset items.
-
-    Returns:
-        dict: Batch with images as tensors.
-    """
-    images = torch.stack([_transform(item["image"]) for item in batch])
-    return {"image": images}
-
-
 if __name__ == "__main__":
     dataset = load_dataset("tsbpp/fall2025_deeplearning", split="train")
     sample_size = 10_000
     dataset = dataset.select(range(sample_size))
-    _transform = transforms.Compose(
-        [
-            transforms.ToTensor(),  # Converts PIL Image to [C, H, W] tensor in [0, 1]
-        ]
-    )
+
+    def _transform_example(example: dict) -> dict:
+        """Transform function to convert images to tensors.
+
+        Args:
+            example (dict): Dataset example.
+
+        Returns:
+            dict: Transformed example.
+        """
+        example["image"] = F.to_tensor(example["image"])
+        return example
+
+    dataset = dataset.with_transform(_transform_example)
+
     dataloader = DataLoader(
-        dataset, batch_size=512, shuffle=False, num_workers=8, collate_fn=_collate_fn, persistent_workers=True
+        dataset,
+        batch_size=512,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=True,
+        persistent_workers=True,
     )
     mean, std = compute_dataloader_statistics(dataloader, "cuda:0")
     print(f"Mean: {mean}")
