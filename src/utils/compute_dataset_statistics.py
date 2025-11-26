@@ -37,17 +37,34 @@ if __name__ == "__main__":
     sample_size = 10_000
     dataset = dataset.select(range(sample_size))
 
-    def _transform_example(example: dict) -> dict:
+    def _transform_example(examples: dict) -> dict:
         """Transform function to convert images to tensors.
 
         Args:
-            example (dict): Dataset example.
+            examples (dict): Dataset example.
 
         Returns:
             dict: Transformed example.
         """
-        example["image"] = F.to_tensor(example["image"])
-        return example
+        if isinstance(examples["image"], list):
+            # Batch mode: transform each image in the list
+            examples["image"] = [F.to_tensor(img) for img in examples["image"]]
+        else:
+            # Single item mode: transform the single image
+            examples["image"] = F.to_tensor(examples["image"])
+        return examples
+
+    def _collate_fn(batch: list[dict]) -> dict:
+        """Collate function to stack tensors.
+
+        Args:
+            batch: List of dictionaries with 'image' key containing tensors.
+
+        Returns:
+            Dictionary with stacked image tensors.
+        """
+        images = torch.stack([item["image"] for item in batch])
+        return {"image": images}
 
     dataset = dataset.with_transform(_transform_example)
 
@@ -58,6 +75,8 @@ if __name__ == "__main__":
         num_workers=4,
         pin_memory=True,
         persistent_workers=True,
+        prefetch_factor=4,
+        collate_fn=_collate_fn,
     )
     mean, std = compute_dataloader_statistics(dataloader, "cuda:0")
     print(f"Mean: {mean}")
