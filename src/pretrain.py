@@ -73,4 +73,5 @@ if __name__ == "__main__":
         save_interval_steps=args.save_interval_steps,
         save_latest=args.save_latest,
         save_best=args.save_best,
+        loss_metric_for_best_model=args.loss_metric_for_best_model,
     )
