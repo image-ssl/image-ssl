@@ -211,11 +211,7 @@ class BaseTrainer(ModelHubMixin):
         )
         with open(save_directory / "training_config.json", "w") as f:
             json.dump(self.__dict__, f, indent=2, default=str)
-        # Create two directories for student and teacher models
-        Path(save_directory / "student").mkdir(parents=True, exist_ok=True)
-        Path(save_directory / "teacher").mkdir(parents=True, exist_ok=True)
-        self.student_model.save_pretrained(save_directory / "student")
-        self.teacher_model.save_pretrained(save_directory / "teacher")
+        self.student_model.save_pretrained(save_directory)
 
     @classmethod
     def _from_pretrained(

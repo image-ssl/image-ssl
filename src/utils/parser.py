@@ -250,7 +250,14 @@ def parse_pretrain_args() -> argparse.Namespace:
     parser.add_argument(
         "--save-best",
         action="store_true",
-        help="If set, track and save the best model checkpoint based on training loss.",
+        help="If set, track and save the best model checkpoint based on specified loss.",
+    )
+    parser.add_argument(
+        "--loss-metric-for-best-model",
+        type=str,
+        default="train",
+        choices=["train", "val"],
+        help="Loss metric to use for determining the best model. Default='train'.",
     )
 
     # Weights & Biases integration
