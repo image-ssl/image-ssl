@@ -27,11 +27,11 @@ def compute_dataloader_statistics(dataloader: DataLoader, device: str = "cuda") 
         n_pixels = batch_size * height * width
         images = images.view(channels, -1)
         sum_pixels += images.sum(dim=1)
-        sum_squared_pixels += (images ** 2).sum(dim=1)
+        sum_squared_pixels += (images**2).sum(dim=1)
         total_pixels += n_pixels
 
     mean = sum_pixels / total_pixels
-    variance = (sum_squared_pixels / total_pixels) - (mean ** 2)
+    variance = (sum_squared_pixels / total_pixels) - (mean**2)
     std = torch.sqrt(variance)
     return mean.cpu().tolist(), std.cpu().tolist()
 
@@ -59,12 +59,7 @@ if __name__ == "__main__":
         ]
     )
     dataloader = DataLoader(
-        dataset,
-        batch_size=512,
-        shuffle=False,
-        num_workers=8,
-        collate_fn=_collate_fn,
-        persistent_workers=True
+        dataset, batch_size=512, shuffle=False, num_workers=8, collate_fn=_collate_fn, persistent_workers=True
     )
     mean, std = compute_dataloader_statistics(dataloader, "cuda:0")
     print(f"Mean: {mean}")
