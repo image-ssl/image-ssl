@@ -1,11 +1,12 @@
 #!/bin/bash
 
 #SBATCH --job-name=images_ssl
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
-## SBATCH --partition=a100_1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=128G
+#SBATCH --partition=rtx8000
+## SBATCH --account=csci_ga_2572-2025fa
 #SBATCH --open-mode=append
-#SBATCH --time=24:00:00
+#SBATCH --time=36:00:00
 #SBATCH --gres=gpu:1
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --output=logs/%x_%j.out
@@ -59,7 +60,7 @@ LOCAL_CROPS_SCALE=(0.05 0.4)
 
 # Training hyperparameters
 CHECKPOINT=""                   # Path or model ID of pre-trained checkpoint (empty = train from scratch)
-BATCH_SIZE=16                   # Batch size for training
+BATCH_SIZE=256                  # Batch size for training
 NUM_EPOCHS=5                    # Number of training epochs
 LEARNING_RATE=3e-4              # Learning rate for optimizer
 OPTIMIZER_CLASS="adamw"         # Choices: adamw, adam, sgd
@@ -74,9 +75,9 @@ LR_SCHEDULER_CLASS="cosine"        # Choices: cosine, exponential
 WARMUP_RATIO=0.1                # Ratio of warmup steps to total training steps
 
 # Logging and checkpointing
-LOG_INTERVAL_STEPS=100         # Log training loss every N steps
-SAVE_INTERVAL_STEPS=1000        # Save model checkpoint every N steps
-SAVE_DIR="./saved_models"       # Directory to save checkpoints
+LOG_INTERVAL_STEPS=15         # Log training loss every N steps
+SAVE_INTERVAL_STEPS=315        # Save model checkpoint every N steps
+SAVE_DIR="./saved_models/vit-s8-L6"       # Directory to save checkpoints
 SAVE_LATEST=true               # Overwrite latest checkpoint instead of saving per step
 SAVE_BEST=true                 # Track and save best model based on specified loss
 LOSS_METRIC_FOR_BEST_MODEL="train"    # Metric to use for best model: train, val
@@ -89,7 +90,7 @@ WANDB_NAME=""                   # W&B run name (empty = auto-generated)
 
 # Hugging Face Hub Configuration
 UPLOAD_MODEL_TO_HUB=true      # Upload model to Hugging Face Hub
-REPO_ID=""                   # Hugging Face Hub repository ID
+REPO_ID="image-ssl/vit-s8-L6"                   # Hugging Face Hub repository ID
 
 # System Configuration
 DEVICE="cuda:0"                 # Torch device (cuda:0, cpu, etc.)

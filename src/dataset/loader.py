@@ -57,7 +57,7 @@ def create_pretrain_dataloaders(
             shuffle=False,
             num_workers=8,
             persistent_workers=True,
-            prefetch_factor=2,
+            prefetch_factor=6,
             pin_memory=True,
             drop_last=False,
         )
@@ -71,7 +71,7 @@ def create_pretrain_dataloaders(
         shuffle=True,
         num_workers=8,
         persistent_workers=True,
-        prefetch_factor=2,
+        prefetch_factor=6,
         pin_memory=True,
         drop_last=True,
     )
