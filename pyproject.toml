@@ -9,6 +9,7 @@ dependencies = [
     "huggingface-hub>=1.1.2",
     "numpy>=2.3.4",
     "safetensors>=0.6.2",
+    "scikit-learn>=1.7.2",
     "torch>=2.9.0",
     "torchvision>=0.24.0",
     "wandb>=0.22.3",
