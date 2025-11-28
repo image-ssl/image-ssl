@@ -288,3 +288,114 @@ def parse_pretrain_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility. Default=42.")
 
     return parser.parse_args()
+
+
+def parse_eval_args() -> argparse.Namespace:
+    """Parse command-line arguments for evaluating pretrained ViT checkpoints."""
+
+    parser = argparse.ArgumentParser(
+        description="Evaluate a pretrained ViT checkpoint from the Hugging Face Hub or local files."
+    )
+
+    # Checkpoint + model configuration
+    parser.add_argument(
+        "--model-id",
+        type=str,
+        required=True,
+        help="Repo ID on the Hugging Face Hub, or a local directory compatible with from_pretrained().",
+    )
+    parser.add_argument(
+        "--model-class",
+        type=str,
+        default="pretraining",
+        choices=["base", "pretraining"],
+        help="Which model class to instantiate when loading the checkpoint.",
+    )
+    parser.add_argument(
+        "--model-revision",
+        type=str,
+        default=None,
+        help="Optional git revision / tag / commit to load from the Hub.",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        type=str,
+        default=None,
+        help="Local directory for caching model weights downloaded from the Hub.",
+    )
+    parser.add_argument(
+        "--local-files-only",
+        action="store_true",
+        help="Do not reach out to the network; only use files already present in cache_dir.",
+    )
+
+    # Kaggle CUB-200 evaluation & submission
+    parser.add_argument(
+        "--cub-data-dir",
+        type=str,
+        required=True,
+        help="Path to the dataset directory created by prepare_cub200_for_kaggle.py.",
+    )
+    parser.add_argument(
+        "--cub-batch-size",
+        type=int,
+        default=64,
+        help="Batch size for CUB feature extraction.",
+    )
+    parser.add_argument(
+        "--cub-num-workers",
+        type=int,
+        default=4,
+        help="Number of worker processes for the CUB DataLoaders.",
+    )
+    parser.add_argument(
+        "--cub-pin-memory",
+        action="store_true",
+        help="Enable pin_memory on the CUB DataLoaders (has no effect on CPU-only runs).",
+    )
+    parser.add_argument(
+        "--cub-include-val",
+        action="store_true",
+        help="Include the validation split in the feature bank in addition to the train split.",
+    )
+    parser.add_argument(
+        "--cub-k",
+        type=int,
+        default=5,
+        help="Number of neighbors to use for the CUB k-NN classifier.",
+    )
+    parser.add_argument(
+        "--cub-num-classes",
+        type=int,
+        default=200,
+        help="Number of classes in the CUB dataset.",
+    )
+    parser.add_argument(
+        "--submission-path",
+        type=str,
+        default="submission.csv",
+        help="Output path for the Kaggle submission CSV.",
+    )
+    parser.add_argument(
+        "--save-train-features",
+        type=str,
+        default=None,
+        help="Optional path to save extracted train (and optional val) features.",
+    )
+    parser.add_argument(
+        "--save-test-features",
+        type=str,
+        default=None,
+        help="Optional path to save extracted test features.",
+    )
+
+    # System / reproducibility
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda:0",
+        help="Torch device identifier (falls back to CPU if unavailable).",
+    )
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility.")
+
+    return parser.parse_args()
