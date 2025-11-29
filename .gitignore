@@ -9,3 +9,6 @@ saved_models/
 wandb/
 logs/
 results/
+data/
+raw_data/
+*.tgz
