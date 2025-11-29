@@ -18,9 +18,7 @@ Usage:
 """
 
 import torch
-import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoImageProcessor, Dinov2Model
 from PIL import Image
 from pathlib import Path
 import pandas as pd
@@ -28,7 +26,9 @@ import numpy as np
 from tqdm import tqdm
 from sklearn.neighbors import KNeighborsClassifier
 import argparse
+from torchvision import transforms
 
+from src.models import VisionTransformer
 
 # ============================================================================
 #                          MODEL SECTION (Modular)
@@ -42,7 +42,7 @@ class FeatureExtractor:
     train your own model from scratch.
     """
     
-    def __init__(self, model_name='facebook/webssl-dino300m-full2b-224', device='cuda'):
+    def __init__(self, model_name, device='cuda'):
         """
         Initialize feature extractor.
         
@@ -51,8 +51,9 @@ class FeatureExtractor:
             device: 'cuda' or 'cpu'
         """
         print(f"Loading model: {model_name}")
-        self.processor = AutoImageProcessor.from_pretrained(model_name)
-        self.model = Dinov2Model.from_pretrained(model_name)
+        self.model = VisionTransformer.from_pretrained(model_name)
+        for param in self.model.parameters():
+            param.requires_grad = False  # Freeze model
         self.model.eval()
         self.model = self.model.to(device)
         self.device = device
@@ -96,18 +97,19 @@ class FeatureExtractor:
             features: numpy array of shape (batch_size, feature_dim)
         """
         # Process batch
-        inputs = self.processor(images=images, return_tensors="pt")
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        
-        # Extract features
-        # Please keep the model backbone frozen for the competition!
+        normalize = transforms.Compose(
+            [
+                transforms.PILToTensor(),
+                transforms.ConvertImageDtype(torch.float32),
+                # TODO: Find out mean/std for the entire dataset
+                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+            ]
+        )
+        inputs = [normalize(img) for img in images]
+        inputs = torch.stack(inputs).to(self.device).to(torch.float32)
         with torch.no_grad():
-            outputs = self.model(**inputs)
-        
-        # Use CLS token features
-        cls_features = outputs.last_hidden_state[:, 0]
-        
-        return cls_features.cpu().numpy()
+            outputs = self.model(inputs)
+        return outputs.cls.cpu()
 
 
 # ============================================================================
