@@ -86,7 +86,7 @@ LOSS_METRIC_FOR_BEST_MODEL="train"    # Metric to use for best model: train, val
 USE_WANDB=true                 # Enable W&B experiment tracking
 WANDB_ENTITY="image-ssl"        # W&B entity name
 WANDB_PROJECT="pretraining"     # W&B project name
-WANDB_NAME=""                   # W&B run name (empty = auto-generated)
+WANDB_NAME="vit-s8-L6"                   # W&B run name (empty = auto-generated)
 
 # Hugging Face Hub Configuration
 UPLOAD_MODEL_TO_HUB=true      # Upload model to Hugging Face Hub
