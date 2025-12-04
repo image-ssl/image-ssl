@@ -7,7 +7,7 @@
 #SBATCH --account=csci_ga_2572-2025fa
 #SBATCH --open-mode=append
 #SBATCH --time=12:00:00
-#SBATCH --gres=gpu:a100:1
+#SBATCH --gres=gpu:1
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --chdir=/scratch/ab12057/image-ssl       # Update with your NYU NetID
