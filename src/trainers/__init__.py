@@ -28,8 +28,6 @@ def init_trainer(
         Trainer: An instance of the Trainer class.
     """
     cls = TRAINER_REGISTRY[cls]
-    if args.checkpoint is not None:
-        return cls.from_pretrained(args.checkpoint, student_model=student_model, teacher_model=teacher_model)
     trainer_kwargs = vars(args).copy()
     trainer_kwargs.setdefault("total_steps", len(train_loader) * args.num_epochs)
     return cls(student_model=student_model, teacher_model=teacher_model, **trainer_kwargs)

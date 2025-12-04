@@ -190,7 +190,8 @@ class PreTrainer(BaseTrainer):
                 # run forward pass for teacher and student
                 teacher_outputs = self.teacher_model(images[:2])
                 student_outputs = self.student_model(images)
-                loss = self._dino_loss(student_outputs, teacher_outputs, epoch, update_teacher=True)
+                current_epoch = epoch + (epoch_step / steps_per_epoch)
+                loss = self._dino_loss(student_outputs, teacher_outputs, current_epoch, update_teacher=True)
 
                 # record loss
                 log_dict["train_loss"] = loss.item()

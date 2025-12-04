@@ -61,8 +61,14 @@ class DINOLoss(nn.Module):
         student_out = student_output / self.student_temp
         student_out = student_out.chunk(self.n_crops)
 
-        clamped_epoch = max(0, min(epoch, len(self.teacher_temp_schedule) - 1))
-        temp = self.teacher_temp_schedule[clamped_epoch]
+        # Use linear interpolation for smooth temperature transitions
+        clamped_epoch = max(0.0, min(epoch, len(self.teacher_temp_schedule) - 1))
+        epoch_floor = int(np.floor(clamped_epoch))
+        epoch_ceil = min(epoch_floor + 1, len(self.teacher_temp_schedule) - 1)
+        weight = clamped_epoch - epoch_floor
+        
+        temp = (1 - weight) * self.teacher_temp_schedule[epoch_floor] + weight * self.teacher_temp_schedule[epoch_ceil]
+        
         teacher_out = F.softmax((teacher_output - self.center) / temp, dim=-1)
         teacher_out = teacher_out.detach().chunk(2)
 

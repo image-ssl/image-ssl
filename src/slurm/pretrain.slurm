@@ -1,13 +1,13 @@
 #!/bin/bash
 
 #SBATCH --job-name=images_ssl
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=128G
-#SBATCH --partition=rtx8000
-## SBATCH --account=csci_ga_2572-2025fa
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --partition=c12m85-a100-1
+#SBATCH --account=csci_ga_2572-2025fa
 #SBATCH --open-mode=append
-#SBATCH --time=36:00:00
-#SBATCH --gres=gpu:1
+#SBATCH --time=12:00:00
+#SBATCH --gres=gpu:a100:1
 #SBATCH --error=logs/%x_%j.err
 #SBATCH --output=logs/%x_%j.out
 #SBATCH --chdir=/scratch/ab12057/image-ssl       # Update with your NYU NetID
@@ -44,25 +44,25 @@ DROPOUT_ATTENTION=0.0           # Dropout probability for attention
 DROPOUT_PATH=0.0                # Dropout probability for stochastic depth
 
 # DINO / multi-crop parameters
-DINO_OUT_DIM=65536
+DINO_OUT_DIM=8192
 DINO_USE_BN=true
 DINO_NORM_LAST_LAYER=true
 DINO_NUM_LAYERS=3
 DINO_HIDDEN_DIM=2048
 DINO_BOTTLENECK_DIM=256
 DINO_BASE_TEACHER_TEMP=0.04
-DINO_FINAL_TEACHER_TEMP=0.04
+DINO_FINAL_TEACHER_TEMP=0.07
 DINO_WARMUP_EPOCHS=0
-NUM_LOCAL_CROPS=6
-LOCAL_CROP_SIZE=36
-GLOBAL_CROPS_SCALE=(0.4 1.0)
-LOCAL_CROPS_SCALE=(0.05 0.4)
+NUM_LOCAL_CROPS=4
+LOCAL_CROP_SIZE=48
+GLOBAL_CROPS_SCALE=(0.7 1.0)
+LOCAL_CROPS_SCALE=(0.3 0.7)
 
 # Training hyperparameters
-CHECKPOINT=""                   # Path or model ID of pre-trained checkpoint (empty = train from scratch)
+CHECKPOINT="image-ssl/vit-s8-lowdim-L4-Lcrop-Gcrop"                   # Path or model ID of pre-trained checkpoint (empty = train from scratch)
 BATCH_SIZE=256                  # Batch size for training
-NUM_EPOCHS=5                    # Number of training epochs
-LEARNING_RATE=3e-4              # Learning rate for optimizer
+NUM_EPOCHS=100                    # Number of training epochs
+LEARNING_RATE=1e-3              # Learning rate for optimizer
 OPTIMIZER_CLASS="adamw"         # Choices: adamw, adam, sgd
 # Weight decay scheduling parameters
 BASE_WD=0.04
@@ -77,7 +77,7 @@ WARMUP_RATIO=0.1                # Ratio of warmup steps to total training steps
 # Logging and checkpointing
 LOG_INTERVAL_STEPS=15         # Log training loss every N steps
 SAVE_INTERVAL_STEPS=315        # Save model checkpoint every N steps
-SAVE_DIR="./saved_models/vit-s8-L6"       # Directory to save checkpoints
+SAVE_DIR="./saved_models/vit-s8-lowdim-L4-Lcrop-Gcrop-smoothloss"       # Directory to save checkpoints
 SAVE_LATEST=true               # Overwrite latest checkpoint instead of saving per step
 SAVE_BEST=true                 # Track and save best model based on specified loss
 LOSS_METRIC_FOR_BEST_MODEL="train"    # Metric to use for best model: train, val
@@ -86,12 +86,11 @@ LOSS_METRIC_FOR_BEST_MODEL="train"    # Metric to use for best model: train, val
 USE_WANDB=true                 # Enable W&B experiment tracking
 WANDB_ENTITY="image-ssl"        # W&B entity name
 WANDB_PROJECT="pretraining"     # W&B project name
-WANDB_NAME="vit-s8-L6"                   # W&B run name (empty = auto-generated)
+WANDB_NAME="vit-s8-lowdim-L4-Lcrop-Gcrop-smoothloss"                   # W&B run name (empty = auto-generated)
 
 # Hugging Face Hub Configuration
 UPLOAD_MODEL_TO_HUB=true      # Upload model to Hugging Face Hub
-REPO_ID="image-ssl/vit-s8-L6"                   # Hugging Face Hub repository ID
-
+REPO_ID="image-ssl/vit-s8-lowdim-L4-Lcrop-Gcrop-smoothloss"                   # Hugging Face Hub repository ID
 # System Configuration
 DEVICE="cuda:0"                 # Torch device (cuda:0, cpu, etc.)
 SEED=42                         # Random seed for reproducibility
