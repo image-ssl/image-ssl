@@ -71,8 +71,8 @@ class ImageTransform:
         image_size: int,
         num_local_crops: int = 6,
         local_crop_size: int = 36,
-        global_crops_scale: tuple[float, float] = (0.4, 1.0),
-        local_crops_scale: tuple[float, float] = (0.05, 0.4),
+        global_crops_scale: tuple[float, float] = (0.7, 1.0),
+        local_crops_scale: tuple[float, float] = (0.3, 0.7),
     ) -> None:
         """Initialize the image transform.
 
@@ -114,7 +114,7 @@ class ImageTransform:
             [
                 transforms.ToTensor(),
                 # TODO: Find out mean/std for the entire dataset
-                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+                transforms.Normalize((0.519, 0.497, 0.470), (0.305, 0.301, 0.312)),
             ]
         )
 
