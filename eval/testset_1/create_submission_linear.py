@@ -24,8 +24,10 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
-from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
+import torch.nn as nn
+import torch.optim as optim
+from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
 import argparse
 from torchvision import transforms
 import sys
@@ -245,32 +247,64 @@ def extract_features_from_dataloader(feature_extractor, dataloader, split_name='
     
     return features, labels, all_filenames
 
+class LinearClassifier(nn.Module):
+    """PyTorch linear classifier for linear probing"""
+    def __init__(self, feature_dim, num_classes):
+        super().__init__()
+        self.classifier = nn.Linear(feature_dim, num_classes)
+        
+    def forward(self, x):
+        return self.classifier(x)
+
+
 def train_linear_classifier(
     train_features, 
     train_labels, 
     val_features, 
     val_labels, 
-    max_iter=1000,
-    C=1.0,
-    use_scaler=True
+    num_classes=200,
+    epochs=100,
+    batch_size=256,
+    learning_rate=0.1,
+    weight_decay=0.0,
+    use_scaler=True,
+    optimizer='sgd',
+    lr_scheduler='cosine',
+    device='cuda'
 ):
     """
-    Train linear classifier on features.
+    Train linear classifier on features using PyTorch (similar to solo-learn).
     
     Args:
         train_features: Training features (N_train, feature_dim)
         train_labels: Training labels (N_train,)
         val_features: Validation features (N_val, feature_dim)
         val_labels: Validation labels (N_val,)
-        max_iter: Maximum iterations for logistic regression
-        C: Inverse of regularization strength (smaller = stronger regularization)
+        num_classes: Number of classes
+        epochs: Number of training epochs
+        batch_size: Batch size for training
+        learning_rate: Initial learning rate
+        weight_decay: L2 regularization strength
         use_scaler: Whether to standardize features
+        optimizer: Optimizer type ('sgd' or 'adam')
+        lr_scheduler: Learning rate scheduler ('cosine' or 'step' or None)
+        device: Device to use ('cuda', 'mps', or 'cpu')
     
     Returns:
-        classifier: Trained linear classifier
+        model: Trained PyTorch linear classifier
         scaler: Feature scaler (if used)
     """
-    print(f"\nTraining Linear Classifier (max_iter={max_iter}, C={C})...")
+    print(f"\nTraining Linear Classifier (PyTorch-based, similar to solo-learn)...")
+    print(f"  Epochs: {epochs}, Batch size: {batch_size}, LR: {learning_rate}")
+    print(f"  Optimizer: {optimizer}, Weight decay: {weight_decay}")
+    
+    # Move to device
+    if device == 'cuda' and not torch.cuda.is_available():
+        device = 'cpu'
+    elif device == 'mps' and not torch.backends.mps.is_available():
+        device = 'cpu'
+    device = torch.device(device)
+    print(f"  Device: {device}")
     
     # Optionally standardize features
     scaler = None
@@ -280,48 +314,171 @@ def train_linear_classifier(
         train_features = scaler.fit_transform(train_features)
         val_features = scaler.transform(val_features)
     
-    # Train logistic regression (multi-class)
-    classifier = LogisticRegression(
-        max_iter=max_iter,
-        C=C,
-        multi_class='multinomial',  # For multi-class classification
-        solver='lbfgs',  # Good for small-medium datasets
-        random_state=42,
-        n_jobs=-1
+    # Convert to tensors
+    train_features_tensor = torch.FloatTensor(train_features).to(device)
+    train_labels_tensor = torch.LongTensor(train_labels).to(device)
+    val_features_tensor = torch.FloatTensor(val_features).to(device)
+    val_labels_tensor = torch.LongTensor(val_labels).to(device)
+    
+    # Create model
+    feature_dim = train_features.shape[1]
+    model = LinearClassifier(feature_dim, num_classes).to(device)
+    criterion = nn.CrossEntropyLoss()
+    
+    # Setup optimizer
+    if optimizer.lower() == 'sgd':
+        optimizer_obj = optim.SGD(
+            model.parameters(),
+            lr=learning_rate,
+            momentum=0.9,
+            weight_decay=weight_decay
+        )
+    elif optimizer.lower() == 'adam':
+        optimizer_obj = optim.Adam(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay
+        )
+    else:
+        raise ValueError(f"Unknown optimizer: {optimizer}")
+    
+    # Setup learning rate scheduler
+    scheduler = None
+    if lr_scheduler == 'cosine':
+        scheduler = CosineAnnealingLR(optimizer_obj, T_max=epochs, eta_min=1e-6)
+    elif lr_scheduler == 'step':
+        scheduler = StepLR(optimizer_obj, step_size=30, gamma=0.1)
+    
+    # Create data loaders
+    train_dataset = torch.utils.data.TensorDataset(train_features_tensor, train_labels_tensor)
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset, 
+        batch_size=batch_size, 
+        shuffle=True,
+        num_workers=0  # No multiprocessing for tensors
     )
     
-    print("  Fitting classifier...")
-    classifier.fit(train_features, train_labels)
+    val_dataset = torch.utils.data.TensorDataset(val_features_tensor, val_labels_tensor)
+    val_loader = torch.utils.data.DataLoader(
+        val_dataset, 
+        batch_size=batch_size, 
+        shuffle=False,
+        num_workers=0
+    )
     
-    # Evaluate
-    train_acc = classifier.score(train_features, train_labels)
-    val_acc = classifier.score(val_features, val_labels)
+    # Training loop
+    best_val_acc = 0.0
+    best_model_state = None
+    
+    print("\n  Training...")
+    for epoch in range(epochs):
+        # Training phase
+        model.train()
+        train_loss = 0.0
+        train_correct = 0
+        train_total = 0
+        
+        for features, labels in train_loader:
+            optimizer_obj.zero_grad()
+            outputs = model(features)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer_obj.step()
+            
+            train_loss += loss.item()
+            _, predicted = torch.max(outputs.data, 1)
+            train_total += labels.size(0)
+            train_correct += (predicted == labels).sum().item()
+        
+        train_acc = train_correct / train_total
+        
+        # Validation phase
+        model.eval()
+        val_correct = 0
+        val_total = 0
+        
+        with torch.no_grad():
+            for features, labels in val_loader:
+                outputs = model(features)
+                _, predicted = torch.max(outputs.data, 1)
+                val_total += labels.size(0)
+                val_correct += (predicted == labels).sum().item()
+        
+        val_acc = val_correct / val_total
+        
+        # Update learning rate
+        if scheduler is not None:
+            scheduler.step()
+            current_lr = optimizer_obj.param_groups[0]['lr']
+        else:
+            current_lr = learning_rate
+        
+        # Save best model
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_model_state = model.state_dict().copy()
+        
+        # Print progress every 10 epochs or on last epoch
+        if (epoch + 1) % 10 == 0 or epoch == epochs - 1:
+            print(f"  Epoch [{epoch+1}/{epochs}] - "
+                  f"Train Acc: {train_acc:.4f}, Val Acc: {val_acc:.4f}, "
+                  f"LR: {current_lr:.6f}")
+    
+    # Load best model
+    if best_model_state is not None:
+        model.load_state_dict(best_model_state)
+        print(f"\n  Best validation accuracy: {best_val_acc:.4f} ({best_val_acc*100:.2f}%)")
+    
+    # Final evaluation
+    model.eval()
+    with torch.no_grad():
+        train_outputs = model(train_features_tensor)
+        _, train_predicted = torch.max(train_outputs.data, 1)
+        train_acc = (train_predicted == train_labels_tensor).float().mean().item()
+        
+        val_outputs = model(val_features_tensor)
+        _, val_predicted = torch.max(val_outputs.data, 1)
+        val_acc = (val_predicted == val_labels_tensor).float().mean().item()
     
     print(f"\nLinear Probing Results:")
     print(f"  Train Accuracy: {train_acc:.4f} ({train_acc*100:.2f}%)")
     print(f"  Val Accuracy: {val_acc:.4f} ({val_acc*100:.2f}%)")
     
-    return classifier, scaler
+    return model, scaler
 
-def create_submission(test_features, test_filenames, classifier, scaler, output_path, num_classes=200):
+def create_submission(test_features, test_filenames, model, scaler, output_path, num_classes=200, device='cuda'):
     """
     Create submission.csv for Kaggle.
     
     Args:
         test_features: Test features (N_test, feature_dim)
         test_filenames: List of test image filenames
-        classifier: Trained linear classifier
+        model: Trained PyTorch linear classifier
         scaler: Feature scaler (if used, None otherwise)
         output_path: Path to save submission.csv
         num_classes: Number of classes (for validation)
+        device: Device to use for inference
     """
     print("\nGenerating predictions on test set...")
+    
+    # Move to device
+    if device == 'cuda' and not torch.cuda.is_available():
+        device = 'cpu'
+    elif device == 'mps' and not torch.backends.mps.is_available():
+        device = 'cpu'
+    device = torch.device(device)
     
     # Apply scaler if used
     if scaler is not None:
         test_features = scaler.transform(test_features)
     
-    predictions = classifier.predict(test_features)
+    # Convert to tensor and predict
+    test_features_tensor = torch.FloatTensor(test_features).to(device)
+    model.eval()
+    with torch.no_grad():
+        outputs = model(test_features_tensor)
+        _, predictions = torch.max(outputs.data, 1)
+        predictions = predictions.cpu().numpy()
     
     # Create submission dataframe
     submission_df = pd.DataFrame({
@@ -362,13 +519,23 @@ def main():
                         help='Model class: auto (try pretraining first), base, or pretraining')
     parser.add_argument('--resolution', type=int, default=96,
                         help='Image resolution (96 for competition, 224 for DINO)')
-    parser.add_argument('--max_iter', type=int, default=1000,
-                        help='Maximum iterations for logistic regression')
-    parser.add_argument('--C', type=float, default=1.0,
-                        help='Inverse of regularization strength (smaller = stronger regularization)')
+    parser.add_argument('--epochs', type=int, default=100,
+                        help='Number of training epochs')
+    parser.add_argument('--batch_size', type=int, default=256,
+                        help='Batch size for training linear classifier')
+    parser.add_argument('--learning_rate', type=float, default=0.1,
+                        help='Initial learning rate')
+    parser.add_argument('--weight_decay', type=float, default=0.0,
+                        help='Weight decay (L2 regularization)')
+    parser.add_argument('--optimizer', type=str, default='sgd',
+                        choices=['sgd', 'adam'],
+                        help='Optimizer type (sgd or adam)')
+    parser.add_argument('--lr_scheduler', type=str, default='cosine',
+                        choices=['cosine', 'step', 'none'],
+                        help='Learning rate scheduler (cosine, step, or none)')
     parser.add_argument('--no_scaler', action='store_true',
                         help='Disable feature standardization')
-    parser.add_argument('--batch_size', type=int, default=32,
+    parser.add_argument('--feature_batch_size', type=int, default=32,
                         help='Batch size for feature extraction')
     parser.add_argument('--num_workers', type=int, default=4,
                         help='Number of workers for data loading')
@@ -429,7 +596,7 @@ def main():
     # Create dataloaders
     train_loader = DataLoader(
         train_dataset, 
-        batch_size=args.batch_size,
+        batch_size=args.feature_batch_size,
         shuffle=False, 
         num_workers=args.num_workers,
         collate_fn=collate_fn
@@ -437,7 +604,7 @@ def main():
     
     val_loader = DataLoader(
         val_dataset, 
-        batch_size=args.batch_size,
+        batch_size=args.feature_batch_size,
         shuffle=False, 
         num_workers=args.num_workers,
         collate_fn=collate_fn
@@ -445,7 +612,7 @@ def main():
     
     test_loader = DataLoader(
         test_dataset, 
-        batch_size=args.batch_size,
+        batch_size=args.feature_batch_size,
         shuffle=False, 
         num_workers=args.num_workers,
         collate_fn=collate_fn
@@ -486,22 +653,29 @@ def main():
         print(f"   This might indicate the model isn't loading correctly or features are broken.")
     
     # Train linear classifier
-    classifier, scaler = train_linear_classifier(
+    model, scaler = train_linear_classifier(
         train_features, train_labels,
         val_features, val_labels,
-        max_iter=args.max_iter,
-        C=args.C,
-        use_scaler=not args.no_scaler
+        num_classes=args.num_classes,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        use_scaler=not args.no_scaler,
+        optimizer=args.optimizer,
+        lr_scheduler=None if args.lr_scheduler == 'none' else args.lr_scheduler,
+        device=device
     )
     
     # Create submission
     create_submission(
         test_features, 
         test_filenames, 
-        classifier, 
+        model, 
         scaler,
         args.output,
-        num_classes=args.num_classes
+        num_classes=args.num_classes,
+        device=device
     )
     
     print("\n" + "="*60)
