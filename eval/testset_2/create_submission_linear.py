@@ -560,7 +560,7 @@ def main():
     parser.add_argument('--model_class', type=str, default='auto',
                         choices=['auto', 'base', 'pretraining'],
                         help='Model class: auto (try pretraining first), base, or pretraining')
-    parser.add_argument('--epochs', type=int, default=200,
+    parser.add_argument('--epochs', type=int, default=1000,
                         help='Number of training epochs (for linear classifier)')
     parser.add_argument('--learning_rate', type=float, default=0.05,
                         help='Initial learning rate (for linear classifier)')
