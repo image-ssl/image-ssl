@@ -1,22 +1,33 @@
 """
-Create Kaggle Submission with KNN Classifier
-=============================================
+Create Kaggle Submission with Linear Probing Classifier
+========================================================
 
-This script provides a simple baseline using:
-- Pretrained DINO model for feature extraction
-- KNN classifier for predictions
+This script provides a linear probing baseline using:
+- Pretrained SSL model for feature extraction (frozen encoder)
+- Linear classifier trained on extracted features
 
 NOTE: This is a BASELINE example. For the competition, you MUST:
 - Train your own SSL model from scratch (no pretrained weights!)
 - This script is just to understand the submission format
 
 Usage:
-    python create_submission_knn.py \
+    python create_submission_linear.py \
         --data_dir ./kaggle_data \
         --output submission.csv \
-        --k 5
+        --max_iter 1000
 """
 
+import torch
+from torch.utils.data import Dataset, DataLoader
+from PIL import Image
+from pathlib import Path
+import pandas as pd
+import numpy as np
+from tqdm import tqdm
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+import argparse
+from torchvision import transforms
 import sys
 from pathlib import Path
 
@@ -28,18 +39,9 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
 import pandas as pd
-import numpy as np
-from tqdm import tqdm
-from sklearn.neighbors import KNeighborsClassifier
-import argparse
-from torchvision import transforms
 
 from src.models import VisionTransformer, VisionTransformerWithPretrainingHeads
 
-
-# ============================================================================
-#                          MODEL SECTION (Modular)
-# ============================================================================
 
 class FeatureExtractor:
     """
@@ -97,48 +99,68 @@ class FeatureExtractor:
         
     def extract_batch_features(self, images):
         """
-        Extract features from a batch of PIL Images.
-        
-        Args:
-            images: List of PIL Images
-        
-        Returns:
-            features: numpy array of shape (batch_size, feature_dim)
+        Extract CLS features from the encoder ONLY.
+        Supports DINO, ViT, and HuggingFace models.
         """
-        # Process batch
-        normalize = transforms.Compose(
-            [
-                transforms.PILToTensor(),
-                transforms.ConvertImageDtype(torch.float32),
-                # Using ImageNet stats (same as training)
-                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-            ]
-        )
+
+        # Correct normalization
+        normalize = transforms.Compose([
+            transforms.PILToTensor(),
+            transforms.ConvertImageDtype(torch.float32),
+            transforms.Normalize(
+                mean=[0.519446, 0.497993, 0.470205],
+                std=[0.305701, 0.301156, 0.312470]
+            )
+        ])
+
+        # Prepare batch
         inputs = [normalize(img) for img in images]
-        inputs = torch.stack(inputs).to(self.device).to(torch.float32)
-        
+        inputs = torch.stack(inputs).to(self.device)
+
         with torch.no_grad():
-            # If using pretraining model, extract from encoder (not the DINO head!)
-            if self.model_class == 'pretraining' and hasattr(self.model, 'encoder'):
-                outputs = self.model.encoder(inputs)
+            # --------------------------------------------
+            # 🔥 BEST PATH: DINO models with intermediate layers
+            # --------------------------------------------
+            if hasattr(self.model, "encoder") and hasattr(self.model.encoder, "get_intermediate_layers"):
+                feats = self.model.encoder.get_intermediate_layers(inputs, n=1)[0][:, 0]
+
+            # --------------------------------------------
+            # 🔥 Common ViT models (forward_features)
+            # --------------------------------------------
+            elif hasattr(self.model, "forward_features"):
+                out = self.model.forward_features(inputs)
+
+                # If dict output (HF / DINOv2)
+                if isinstance(out, dict):
+                    if "x_norm_clstoken" in out:
+                        feats = out["x_norm_clstoken"]
+                    elif "cls_token" in out:
+                        feats = out["cls_token"]
+                    else:
+                        raise ValueError(f"Cannot find CLS token in output dict: {out.keys()}")
+
+                # If tokens (B, N, D)
+                elif out.ndim == 3:
+                    feats = out[:, 0]
+
+                # Already CLS
+                else:
+                    feats = out
+
+            # --------------------------------------------
+            # 🔥 FALLBACK — call encoder directly
+            # (never call self.model()!)
+            # --------------------------------------------
+            elif hasattr(self.model, "encoder"):
+                out = self.model.encoder(inputs)
+                feats = out.cls if hasattr(out, "cls") else out
+
             else:
-                outputs = self.model(inputs)
-            
-            # Handle different output formats
-            if hasattr(outputs, 'cls'):
-                features = outputs.cls
-            elif isinstance(outputs, torch.Tensor):
-                # If output is just a tensor, assume it's the CLS token
-                features = outputs
-            else:
-                raise ValueError(f"Unexpected output type: {type(outputs)}")
-        
-        return features.cpu().numpy()
+                raise RuntimeError("Model does not support feature extraction")
+
+        return feats.cpu().numpy()
 
 
-# ============================================================================
-#                          DATA SECTION
-# ============================================================================
 
 class ImageDataset(Dataset):
     """Simple dataset for loading images"""
@@ -184,11 +206,6 @@ def collate_fn(batch):
         filenames = [item[1] for item in batch]
         return images, filenames
 
-
-# ============================================================================
-#                          FEATURE EXTRACTION
-# ============================================================================
-
 def extract_features_from_dataloader(feature_extractor, dataloader, split_name='train'):
     """
     Extract features from a dataloader.
@@ -222,68 +239,88 @@ def extract_features_from_dataloader(feature_extractor, dataloader, split_name='
         all_filenames.extend(filenames)
     
     features = np.concatenate(all_features, axis=0)
-    labels = all_labels if all_labels else None
+    labels = np.array(all_labels) if all_labels else None
     
     print(f"  Extracted {features.shape[0]} features of dimension {features.shape[1]}")
     
     return features, labels, all_filenames
 
-
-# ============================================================================
-#                          KNN CLASSIFIER
-# ============================================================================
-
-def train_knn_classifier(train_features, train_labels, val_features, val_labels, k=5):
+def train_linear_classifier(
+    train_features, 
+    train_labels, 
+    val_features, 
+    val_labels, 
+    max_iter=1000,
+    C=1.0,
+    use_scaler=True
+):
     """
-    Train KNN classifier on features.
+    Train linear classifier on features.
     
     Args:
         train_features: Training features (N_train, feature_dim)
         train_labels: Training labels (N_train,)
         val_features: Validation features (N_val, feature_dim)
         val_labels: Validation labels (N_val,)
-        k: Number of neighbors
+        max_iter: Maximum iterations for logistic regression
+        C: Inverse of regularization strength (smaller = stronger regularization)
+        use_scaler: Whether to standardize features
     
     Returns:
-        classifier: Trained KNN classifier
+        classifier: Trained linear classifier
+        scaler: Feature scaler (if used)
     """
-    print(f"\nTraining KNN classifier (k={k})...")
+    print(f"\nTraining Linear Classifier (max_iter={max_iter}, C={C})...")
     
-    classifier = KNeighborsClassifier(
-        n_neighbors=k,
-        weights='distance',  # Weight by inverse distance
-        metric='cosine',  # Cosine similarity for embeddings
+    # Optionally standardize features
+    scaler = None
+    if use_scaler:
+        print("  Standardizing features...")
+        scaler = StandardScaler()
+        train_features = scaler.fit_transform(train_features)
+        val_features = scaler.transform(val_features)
+    
+    # Train logistic regression (multi-class)
+    classifier = LogisticRegression(
+        max_iter=max_iter,
+        C=C,
+        multi_class='multinomial',  # For multi-class classification
+        solver='lbfgs',  # Good for small-medium datasets
+        random_state=42,
         n_jobs=-1
     )
     
+    print("  Fitting classifier...")
     classifier.fit(train_features, train_labels)
     
     # Evaluate
     train_acc = classifier.score(train_features, train_labels)
     val_acc = classifier.score(val_features, val_labels)
     
-    print(f"\nKNN Results:")
+    print(f"\nLinear Probing Results:")
     print(f"  Train Accuracy: {train_acc:.4f} ({train_acc*100:.2f}%)")
     print(f"  Val Accuracy: {val_acc:.4f} ({val_acc*100:.2f}%)")
     
-    return classifier
+    return classifier, scaler
 
-
-# ============================================================================
-#                          SUBMISSION CREATION
-# ============================================================================
-
-def create_submission(test_features, test_filenames, classifier, output_path):
+def create_submission(test_features, test_filenames, classifier, scaler, output_path, num_classes=200):
     """
     Create submission.csv for Kaggle.
     
     Args:
         test_features: Test features (N_test, feature_dim)
         test_filenames: List of test image filenames
-        classifier: Trained KNN classifier
+        classifier: Trained linear classifier
+        scaler: Feature scaler (if used, None otherwise)
         output_path: Path to save submission.csv
+        num_classes: Number of classes (for validation)
     """
     print("\nGenerating predictions on test set...")
+    
+    # Apply scaler if used
+    if scaler is not None:
+        test_features = scaler.transform(test_features)
+    
     predictions = classifier.predict(test_features)
     
     # Create submission dataframe
@@ -307,18 +344,13 @@ def create_submission(test_features, test_filenames, classifier, output_path):
     # Validate submission format
     print(f"\nValidating submission format...")
     assert list(submission_df.columns) == ['id', 'class_id'], "Invalid columns!"
-    assert submission_df['class_id'].min() >= 0, "Invalid class_id < 0"
-    assert submission_df['class_id'].max() <= 199, "Invalid class_id > 199"
+    assert submission_df['class_id'].min() >= 0, f"Invalid class_id < 0"
+    assert submission_df['class_id'].max() < num_classes, f"Invalid class_id >= {num_classes}"
     assert submission_df.isnull().sum().sum() == 0, "Missing values found!"
     print("✓ Submission format is valid!")
 
-
-# ============================================================================
-#                          MAIN
-# ============================================================================
-
 def main():
-    parser = argparse.ArgumentParser(description='Create Kaggle Submission with KNN')
+    parser = argparse.ArgumentParser(description='Create Kaggle Submission with Linear Probing')
     parser.add_argument('--data_dir', type=str, required=True,
                         help='Root directory containing train/val/test folders')
     parser.add_argument('--output', type=str, default='submission.csv',
@@ -330,14 +362,20 @@ def main():
                         help='Model class: auto (try pretraining first), base, or pretraining')
     parser.add_argument('--resolution', type=int, default=96,
                         help='Image resolution (96 for competition, 224 for DINO)')
-    parser.add_argument('--k', type=int, default=5,
-                        help='Number of neighbors for KNN')
+    parser.add_argument('--max_iter', type=int, default=1000,
+                        help='Maximum iterations for logistic regression')
+    parser.add_argument('--C', type=float, default=1.0,
+                        help='Inverse of regularization strength (smaller = stronger regularization)')
+    parser.add_argument('--no_scaler', action='store_true',
+                        help='Disable feature standardization')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Batch size for feature extraction')
     parser.add_argument('--num_workers', type=int, default=4,
                         help='Number of workers for data loading')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda, mps, or cpu)')
+    parser.add_argument('--num_classes', type=int, default=200,
+                        help='Number of classes in the dataset')
     
     args = parser.parse_args()
     
@@ -447,15 +485,24 @@ def main():
         print(f"\n⚠️  WARNING: Unusual feature statistics detected!")
         print(f"   This might indicate the model isn't loading correctly or features are broken.")
     
-    # Train KNN classifier
-    classifier = train_knn_classifier(
+    # Train linear classifier
+    classifier, scaler = train_linear_classifier(
         train_features, train_labels,
         val_features, val_labels,
-        k=args.k
+        max_iter=args.max_iter,
+        C=args.C,
+        use_scaler=not args.no_scaler
     )
     
     # Create submission
-    create_submission(test_features, test_filenames, classifier, args.output)
+    create_submission(
+        test_features, 
+        test_filenames, 
+        classifier, 
+        scaler,
+        args.output,
+        num_classes=args.num_classes
+    )
     
     print("\n" + "="*60)
     print("DONE! Now upload your submission.csv to Kaggle.")
