@@ -350,8 +350,8 @@ def train_linear_classifier(
             momentum=0.9,
             weight_decay=weight_decay
         )
-    elif optimizer.lower() == 'adam':
-        optimizer_obj = optim.Adam(
+    elif optimizer.lower() == 'adamw':
+        optimizer_obj = optim.AdamW(
             model.parameters(),
             lr=learning_rate,
             weight_decay=weight_decay
@@ -469,7 +469,7 @@ def train_linear_classifier(
 # ============================================================================
 
 def create_submission(test_features, test_filenames, classifier, output_path, 
-                      num_classes=100, device='cuda', scaler=None, 
+                      num_classes=64, device='cuda', scaler=None, 
                       classifier_type='knn'):
     """
     Create submission.csv for Kaggle.
@@ -560,21 +560,21 @@ def main():
     parser.add_argument('--model_class', type=str, default='auto',
                         choices=['auto', 'base', 'pretraining'],
                         help='Model class: auto (try pretraining first), base, or pretraining')
-    parser.add_argument('--epochs', type=int, default=100,
+    parser.add_argument('--epochs', type=int, default=200,
                         help='Number of training epochs (for linear classifier)')
-    parser.add_argument('--learning_rate', type=float, default=0.1,
+    parser.add_argument('--learning_rate', type=float, default=0.05,
                         help='Initial learning rate (for linear classifier)')
-    parser.add_argument('--weight_decay', type=float, default=0.0,
+    parser.add_argument('--weight_decay', type=float, default=0.001,
                         help='Weight decay (for linear classifier)')
-    parser.add_argument('--optimizer', type=str, default='sgd',
-                        choices=['sgd', 'adam'],
+    parser.add_argument('--optimizer', type=str, default='adamw',
+                        choices=['sgd', 'adamw'],
                         help='Optimizer type (for linear classifier)')
     parser.add_argument('--lr_scheduler', type=str, default='cosine',
                         choices=['cosine', 'step', 'none'],
                         help='Learning rate scheduler (for linear classifier)')
     parser.add_argument('--no_scaler', action='store_true',
                         help='Disable feature standardization (for linear classifier)')
-    parser.add_argument('--num_classes', type=int, default=200,
+    parser.add_argument('--num_classes', type=int, default=64,
                         help='Number of classes in the dataset')
     
     args = parser.parse_args()
