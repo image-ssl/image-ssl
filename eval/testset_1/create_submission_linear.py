@@ -251,6 +251,7 @@ class LinearClassifier(nn.Module):
     """PyTorch linear classifier for linear probing"""
     def __init__(self, feature_dim, num_classes):
         super().__init__()
+        print(f"Creating Linear Classifier: feature_dim={feature_dim}, num_classes={num_classes}")
         self.classifier = nn.Linear(feature_dim, num_classes)
         
     def forward(self, x):
@@ -262,7 +263,7 @@ def train_linear_classifier(
     train_labels, 
     val_features, 
     val_labels, 
-    num_classes=200,
+    num_classes,
     epochs=100,
     batch_size=256,
     learning_rate=0.1,
@@ -446,7 +447,7 @@ def train_linear_classifier(
     
     return model, scaler
 
-def create_submission(test_features, test_filenames, model, scaler, output_path, num_classes=200, device='cuda'):
+def create_submission(test_features, test_filenames, model, scaler, output_path, num_classes, device='cuda'):
     """
     Create submission.csv for Kaggle.
     
@@ -541,8 +542,6 @@ def main():
                         help='Number of workers for data loading')
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda, mps, or cpu)')
-    parser.add_argument('--num_classes', type=int, default=200,
-                        help='Number of classes in the dataset')
     
     args = parser.parse_args()
     
@@ -656,7 +655,7 @@ def main():
     model, scaler = train_linear_classifier(
         train_features, train_labels,
         val_features, val_labels,
-        num_classes=args.num_classes,
+        num_classes=train_df['class_id'].nunique(),
         epochs=args.epochs,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
@@ -674,7 +673,7 @@ def main():
         model, 
         scaler,
         args.output,
-        num_classes=args.num_classes,
+        num_classes=train_df['class_id'].nunique(),
         device=device
     )
     

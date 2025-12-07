@@ -351,8 +351,8 @@ def train_linear_classifier(
             momentum=0.9,
             weight_decay=weight_decay
         )
-    elif optimizer.lower() == 'adamw':
-        optimizer_obj = optim.AdamW(
+    elif optimizer.lower() == 'adam':
+        optimizer_obj = optim.Adam(
             model.parameters(),
             lr=learning_rate,
             weight_decay=weight_decay
@@ -561,14 +561,14 @@ def main():
     parser.add_argument('--model_class', type=str, default='auto',
                         choices=['auto', 'base', 'pretraining'],
                         help='Model class: auto (try pretraining first), base, or pretraining')
-    parser.add_argument('--epochs', type=int, default=1000,
+    parser.add_argument('--epochs', type=int, default=100,
                         help='Number of training epochs (for linear classifier)')
-    parser.add_argument('--learning_rate', type=float, default=0.05,
+    parser.add_argument('--learning_rate', type=float, default=0.1,
                         help='Initial learning rate (for linear classifier)')
-    parser.add_argument('--weight_decay', type=float, default=0.001,
+    parser.add_argument('--weight_decay', type=float, default=0.0,
                         help='Weight decay (for linear classifier)')
-    parser.add_argument('--optimizer', type=str, default='adamw',
-                        choices=['sgd', 'adamw'],
+    parser.add_argument('--optimizer', type=str, default='sgd',
+                        choices=['sgd', 'adam'],
                         help='Optimizer type (for linear classifier)')
     parser.add_argument('--lr_scheduler', type=str, default='cosine',
                         choices=['cosine', 'step', 'none'],
@@ -731,7 +731,7 @@ def main():
     print("="*60)
     print(f"\nUsed classifier: {args.classifier.upper()}")
     if args.classifier == 'knn':
-        print(f"KNN parameters: k={train_df['class_id'].nunique()}")
+        print(f"KNN parameters: k={args.k}")
     else:
         print(f"Linear classifier trained for {args.epochs} epochs")
 
