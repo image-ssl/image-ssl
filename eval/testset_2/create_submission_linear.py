@@ -351,6 +351,12 @@ def train_linear_classifier(
             momentum=0.9,
             weight_decay=weight_decay
         )
+    elif optimizer.lower() == 'adam':
+        optimizer_obj = optim.Adam(
+            model.parameters(),
+            lr=learning_rate,
+            weight_decay=weight_decay
+        )
     elif optimizer.lower() == 'adamw':
         optimizer_obj = optim.AdamW(
             model.parameters(),
@@ -567,7 +573,7 @@ def main():
     parser.add_argument('--weight_decay', type=float, default=0.001,
                         help='Weight decay (for linear classifier)')
     parser.add_argument('--optimizer', type=str, default='adamw',
-                        choices=['sgd', 'adamw'],
+                        choices=['sgd', 'adam', 'adamw'],
                         help='Optimizer type (for linear classifier)')
     parser.add_argument('--lr_scheduler', type=str, default='cosine',
                         choices=['cosine', 'step', 'none'],
