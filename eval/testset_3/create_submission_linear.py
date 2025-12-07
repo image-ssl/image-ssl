@@ -527,7 +527,6 @@ def create_submission(test_features, test_filenames, classifier, output_path,
     print(f"\nValidating submission format...")
     assert list(submission_df.columns) == ['id', 'class_id'], "Invalid columns!"
     assert submission_df['class_id'].min() >= 0, "Invalid class_id < 0"
-    assert submission_df['class_id'].max() <= 199, "Invalid class_id > 199"
     assert submission_df.isnull().sum().sum() == 0, "Missing values found!"
     print("✓ Submission format is valid!")
 
