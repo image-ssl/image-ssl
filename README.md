@@ -16,8 +16,6 @@ An end-to-end framework for experimenting with self-supervised visual representa
 - [Evaluation & Submission](#evaluation--submission)
 - [Acknowledgements](#acknowledgements)
 
----
-
 ## Project Overview
 
 Image-SSL is a modular codebase for self-supervised learning (SSL) from images, tailored to the parameter/boundary constraints of the CSCI-GA 2672 Final Project at NYU. It supports:
@@ -30,7 +28,6 @@ Image-SSL is a modular codebase for self-supervised learning (SSL) from images, 
 
 The entire pipeline is designed for reproducibility, research ease, and compliance with course requirements (random init, <100M params, approved data, etc.).
 
----
 
 ## Repository Layout
 
@@ -49,7 +46,6 @@ Key files and folders:
 - `docs/` — project design docs and NYU project specification.
 - `requirements.txt`, `pyproject.toml` — dependencies.
 
----
 
 ## Installation
 
@@ -69,7 +65,6 @@ uv venv --python=3.12
 uv sync --all-extras
 ```
 
----
 
 ## Quickstart
 
@@ -136,7 +131,6 @@ sbatch src/slurm/pretrain.slurm
 
 Outputs are logged to the specified `logs/` directory.
 
----
 
 ## Data
 
@@ -158,7 +152,6 @@ Outputs are logged to the specified `logs/` directory.
       └── sample_submission.csv
     ```
 
----
 
 ## Saved Models & Results
 
@@ -166,7 +159,6 @@ Outputs are logged to the specified `logs/` directory.
 - Each checkpoint contains all model weights and key training metadata (e.g., config.json).
 - Optionally, models may be uploaded to HuggingFace Hub directly via argument flags.
 
----
 
 ## Evaluation & Submission
 
