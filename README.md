@@ -1,6 +1,6 @@
 # Image-SSL
 
-An end-to-end framework for experimenting with self-supervised visual representation learning based on transformer architectures, designed for the NYU Deep Learning (CSCI-GA 2565) Fall 2025 Final Project.
+An end-to-end framework for experimenting with self-supervised visual representation learning based on transformer architectures, designed for the NYU Deep Learning (CSCI-GA 2672) Fall 2025 Final Project.
 
 ## Table of contents
 
@@ -20,7 +20,7 @@ An end-to-end framework for experimenting with self-supervised visual representa
 
 ## Project Overview
 
-Image-SSL is a modular codebase for self-supervised learning (SSL) from images, tailored to the parameter/boundary constraints of the CSCI-GA 2565 Final Project at NYU. It supports:
+Image-SSL is a modular codebase for self-supervised learning (SSL) from images, tailored to the parameter/boundary constraints of the CSCI-GA 2672 Final Project at NYU. It supports:
 
 - **SSL pretraining of ViT** (Vision Transformer) models with DINO loss and multi-crop augmentation.
 - Clean separation of pretraining and downstream evaluation (linear probing, KNN).
